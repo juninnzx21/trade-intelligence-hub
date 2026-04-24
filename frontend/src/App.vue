@@ -35,6 +35,9 @@ const filteredSignals = computed(() =>
 );
 
 const headline = computed(() => liveBoard.value[0] ?? null);
+const actionableSignal = computed(
+  () => liveBoard.value.find((item) => item.decision === "COMPRA" || item.decision === "VENDA") ?? null
+);
 
 async function loadDashboard() {
   loading.value = true;
@@ -230,6 +233,30 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
       <section v-else-if="error" class="state-card error">{{ error }}</section>
 
       <template v-else-if="dashboard && summary && riskProfile">
+        <section
+          v-if="actionableSignal"
+          class="action-callout"
+          :class="actionableSignal.decision === 'COMPRA' ? 'action-callout-buy' : 'action-callout-sell'"
+        >
+          <div>
+            <p class="eyebrow">Alerta operacional</p>
+            <h3>
+              Entre com operacao de {{ actionableSignal.decision === "COMPRA" ? "compra" : "venda" }}
+              em {{ actionableSignal.symbol }}
+            </h3>
+            <p class="hero-subtitle">
+              Entrada sugerida para {{ compactDate(actionableSignal.entry_time) }} • saida em
+              {{ compactDate(actionableSignal.exit_time) }} • validade curta ate
+              {{ compactDate(actionableSignal.signal_valid_until) }}
+            </p>
+          </div>
+          <div class="action-callout-meta">
+            <span :class="decisionClass(actionableSignal.decision)">{{ actionableSignal.decision }}</span>
+            <strong>Score {{ actionableSignal.score }}</strong>
+            <small>Risco {{ actionableSignal.risk_level }} • {{ actionableSignal.duration ?? "-" }}</small>
+          </div>
+        </section>
+
         <section id="command" class="hero-grid">
           <article class="hero-card">
             <div class="hero-copy">
@@ -639,12 +666,16 @@ h1, h2, h3, h4, p { margin: 0; }
 .sidebar { padding: 28px; border-right: 1px solid var(--line); background: rgba(3, 9, 18, 0.82); backdrop-filter: blur(16px); display: flex; flex-direction: column; gap: 26px; }
 .brand { display: grid; gap: 8px; }
 .sidebar nav { display: grid; gap: 12px; }
-.sidebar nav a, .sidebar-card, .panel, .metric-card, .hero-card, .state-card, .strip-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 24px; backdrop-filter: blur(18px); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22); }
+.sidebar nav a, .sidebar-card, .panel, .metric-card, .hero-card, .state-card, .strip-panel, .action-callout { background: var(--panel); border: 1px solid var(--line); border-radius: 24px; backdrop-filter: blur(18px); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22); }
 .sidebar nav a { padding: 13px 14px; color: var(--muted); }
 .sidebar nav a:hover { color: var(--text); border-color: rgba(70, 208, 213, 0.35); }
 .sidebar-card { padding: 18px; display: grid; gap: 8px; }
 .content { padding: 28px; display: grid; gap: 20px; }
 .topbar, .panel-header, .row, .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.action-callout { padding: 24px 28px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.action-callout-buy { background: linear-gradient(135deg, rgba(145, 217, 113, 0.22), rgba(9, 20, 38, 0.96)); border-color: rgba(145, 217, 113, 0.36); box-shadow: 0 28px 90px rgba(145, 217, 113, 0.16); }
+.action-callout-sell { background: linear-gradient(135deg, rgba(255, 127, 146, 0.2), rgba(9, 20, 38, 0.96)); border-color: rgba(255, 127, 146, 0.36); box-shadow: 0 28px 90px rgba(255, 127, 146, 0.16); }
+.action-callout-meta { display: grid; justify-items: end; gap: 8px; min-width: 180px; }
 .hero-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
 .hero-card { grid-column: span 2; padding: 28px; display: flex; justify-content: space-between; align-items: center; background: linear-gradient(140deg, rgba(70, 208, 213, 0.16), rgba(13, 25, 46, 0.94)), var(--panel-strong); }
 .hero-copy { display: grid; gap: 12px; }
@@ -690,6 +721,8 @@ th, td { padding: 12px 8px; border-bottom: 1px solid var(--line); text-align: le
   .shell, .hero-grid, .command-strip, .panel-grid, .admin-grid, .live-grid { grid-template-columns: 1fr; }
   .hero-card { grid-column: span 1; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
+  .action-callout { flex-direction: column; align-items: flex-start; }
+  .action-callout-meta { justify-items: start; }
 }
 @media (max-width: 720px) {
   .content, .sidebar { padding: 18px; }
