@@ -33,8 +33,25 @@ const securityControls = computed(() => dashboard.value?.security_controls ?? []
 const scrapingSources = computed(() => dashboard.value?.scraping_sources ?? []);
 
 const actionableLiveBoard = computed(() =>
-  liveBoard.value.filter((item) => item.decision === "COMPRA" || item.decision === "VENDA")
+  liveBoard.value
+    .filter((item) => item.decision === "COMPRA" || item.decision === "VENDA")
+    .sort((left, right) => right.score - left.score)
 );
+
+const topActionCards = computed(() => actionableLiveBoard.value.slice(0, 3));
+
+const groupedActionableSignals = computed(() => {
+  const groups = new Map<string, LiveAssetBoardItem[]>();
+  for (const item of actionableLiveBoard.value) {
+    const list = groups.get(item.symbol) ?? [];
+    list.push(item);
+    groups.set(item.symbol, list);
+  }
+  return [...groups.entries()].map(([symbol, items]) => ({
+    symbol,
+    items: items.sort((left, right) => right.score - left.score)
+  }));
+});
 
 const filteredSignals = computed(() => {
   const visible = signals.value.filter((signal) => signal.decision === "COMPRA" || signal.decision === "VENDA");
@@ -354,6 +371,7 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
 
       <nav>
         <a href="#command">Command</a>
+        <a href="#spotlight">Spotlight</a>
         <a href="#live-board">Live Board</a>
         <a href="#signals">Signals</a>
         <a href="#macro">Macro</a>
@@ -428,6 +446,32 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
           </article>
         </section>
 
+        <section id="spotlight" class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Spotlight</p>
+              <h3>Principais moedas para entrada agora</h3>
+            </div>
+          </div>
+          <div v-if="topActionCards.length" class="top-cards-grid">
+            <article v-for="item in topActionCards" :key="`${item.symbol}-${item.timeframe}-top`" class="top-action-card">
+              <div class="row">
+                <strong>{{ assetLabel(item.symbol) }}</strong>
+                <span :class="decisionClass(item.decision)">{{ item.decision }}</span>
+              </div>
+              <p class="hero-subtitle">{{ item.market }} • {{ item.timeframe }} • score {{ item.score }}</p>
+              <div class="top-card-meta">
+                <span>Entrada {{ compactDate(item.entry_time) }}</span>
+                <span>Saida {{ compactDate(item.exit_time) }}</span>
+                <span>Risco {{ item.risk_level }}</span>
+              </div>
+            </article>
+          </div>
+          <div v-else class="empty-state">
+            Nenhuma das principais moedas monitoradas tem compra ou venda valida neste instante.
+          </div>
+        </section>
+
         <section class="command-strip">
           <div class="strip-panel">
             <div class="panel-header">
@@ -476,45 +520,55 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Live Board</p>
-                <h3>Somente operacoes validas no radar</h3>
+                <h3>Sinais separados por moeda/par</h3>
               </div>
               <div class="badge">Observer only</div>
             </div>
 
-            <div v-if="actionableLiveBoard.length" class="live-grid">
-              <article v-for="item in actionableLiveBoard" :key="`${item.symbol}-${item.timeframe}`" class="opportunity-card">
-                <div class="row">
+            <div v-if="groupedActionableSignals.length" class="asset-groups">
+              <section v-for="group in groupedActionableSignals" :key="group.symbol" class="asset-group">
+                <div class="row asset-group-header">
                   <div>
-                    <strong>{{ assetLabel(item.symbol) }}</strong>
-                    <p>{{ item.market }} • {{ item.timeframe }} • {{ item.provider }}</p>
+                    <strong>{{ assetLabel(group.symbol) }}</strong>
+                    <p class="muted">{{ group.items.length }} oportunidade(s) ativa(s)</p>
                   </div>
-                  <span :class="decisionClass(item.decision)">{{ item.decision }}</span>
                 </div>
+                <div class="live-grid">
+                  <article v-for="item in group.items" :key="`${item.symbol}-${item.timeframe}`" class="opportunity-card">
+                    <div class="row">
+                      <div>
+                        <strong>{{ item.market }}</strong>
+                        <p>{{ item.timeframe }} • {{ item.provider }}</p>
+                      </div>
+                      <span :class="decisionClass(item.decision)">{{ item.decision }}</span>
+                    </div>
 
-                <div class="score-bar">
-                  <div class="fill" :style="scoreRailStyle(item.score)"></div>
+                    <div class="score-bar">
+                      <div class="fill" :style="scoreRailStyle(item.score)"></div>
+                    </div>
+
+                    <div class="stats-grid">
+                      <span>Score {{ item.score }}</span>
+                      <span>Risco {{ item.risk_level }}</span>
+                      <span>Entrada {{ compactDate(item.entry_time) }}</span>
+                      <span>Saida {{ compactDate(item.exit_time) }}</span>
+                      <span>Duracao {{ item.duration ?? "-" }}</span>
+                      <span>Valido ate {{ compactDate(item.signal_valid_until) }}</span>
+                    </div>
+
+                    <div class="indicator-grid">
+                      <span>RSI {{ item.indicator_snapshot.rsi }}</span>
+                      <span>MACD {{ item.indicator_snapshot.macd }}</span>
+                      <span>ATR {{ item.indicator_snapshot.atr }}</span>
+                      <span>VWAP {{ item.indicator_snapshot.vwap }}</span>
+                    </div>
+
+                    <ul>
+                      <li v-for="reason in item.reasons.slice(0, 4)" :key="reason">{{ reason }}</li>
+                    </ul>
+                  </article>
                 </div>
-
-                <div class="stats-grid">
-                  <span>Score {{ item.score }}</span>
-                  <span>Risco {{ item.risk_level }}</span>
-                  <span>Entrada {{ compactDate(item.entry_time) }}</span>
-                  <span>Saida {{ compactDate(item.exit_time) }}</span>
-                  <span>Duracao {{ item.duration ?? "-" }}</span>
-                  <span>Valido ate {{ compactDate(item.signal_valid_until) }}</span>
-                </div>
-
-                <div class="indicator-grid">
-                  <span>RSI {{ item.indicator_snapshot.rsi }}</span>
-                  <span>MACD {{ item.indicator_snapshot.macd }}</span>
-                  <span>ATR {{ item.indicator_snapshot.atr }}</span>
-                  <span>VWAP {{ item.indicator_snapshot.vwap }}</span>
-                </div>
-
-                <ul>
-                  <li v-for="reason in item.reasons.slice(0, 4)" :key="reason">{{ reason }}</li>
-                </ul>
-              </article>
+              </section>
             </div>
             <div v-else class="empty-state">
               Nenhuma compra ou venda valida agora. O sistema esta corretamente evitando operacao ruim.
@@ -809,7 +863,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .sidebar { padding: 28px; border-right: 1px solid var(--line); background: rgba(3, 9, 18, 0.82); backdrop-filter: blur(16px); display: flex; flex-direction: column; gap: 26px; }
 .brand { display: grid; gap: 8px; }
 .sidebar nav { display: grid; gap: 12px; }
-.sidebar nav a, .sidebar-card, .panel, .metric-card, .hero-card, .state-card, .strip-panel, .floating-guide { background: var(--panel); border: 1px solid var(--line); border-radius: 24px; backdrop-filter: blur(18px); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22); }
+.sidebar nav a, .sidebar-card, .panel, .metric-card, .hero-card, .state-card, .strip-panel, .floating-guide, .top-action-card, .asset-group { background: var(--panel); border: 1px solid var(--line); border-radius: 24px; backdrop-filter: blur(18px); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22); }
 .sidebar nav a { padding: 13px 14px; color: var(--muted); }
 .sidebar nav a:hover { color: var(--text); border-color: rgba(70, 208, 213, 0.35); }
 .sidebar-card { padding: 18px; display: grid; gap: 8px; }
@@ -820,18 +874,21 @@ h1, h2, h3, h4, p { margin: 0; }
 .hero-copy { display: grid; gap: 12px; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 10px; }
 .ghost-chip { padding: 8px 12px; border-radius: 999px; background: rgba(255,255,255,0.04); color: var(--muted); border: 1px solid var(--line); font-size: 0.82rem; }
-.metric-card, .strip-panel, .panel { padding: 22px; }
+.metric-card, .strip-panel, .panel, .top-action-card, .asset-group { padding: 22px; }
 .metric-card { display: grid; gap: 10px; }
 .metric-card strong { font-size: 2rem; }
 .score-ring { width: 116px; height: 116px; border-radius: 50%; border: 10px solid rgba(70,208,213,0.24); display: grid; place-items: center; font-size: 1.95rem; font-weight: 700; }
+.top-cards-grid { margin-top: 18px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.top-card-meta { margin-top: 14px; display: grid; gap: 8px; color: var(--muted); font-size: 0.92rem; }
 .command-strip, .panel-grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 18px; }
 .panel.wide { min-width: 0; }
-.policy-grid, .indicator-grid, .stats-grid, .admin-grid, .live-grid, .stack, .event-list { display: grid; gap: 14px; }
+.policy-grid, .indicator-grid, .stats-grid, .admin-grid, .live-grid, .stack, .event-list, .asset-groups { display: grid; gap: 14px; }
+.asset-group-header { margin-bottom: 16px; }
 .policy-grid { margin-top: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .chart-shell { margin-top: 16px; height: 110px; border-radius: 18px; border: 1px solid rgba(255,255,255,0.05); background: rgba(255,255,255,0.03); padding: 10px; color: var(--cyan); }
 .chart-shell.compact { height: 82px; }
 .chart-shell svg { width: 100%; height: 100%; }
-.live-grid { margin-top: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.live-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .opportunity-card, .event-item, .admin-card { padding: 16px; border-radius: 18px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); }
 .stats-grid, .indicator-grid { margin-top: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); color: var(--muted); font-size: 0.9rem; }
 .opportunity-card ul, .floating-details { margin: 14px 0 0; padding-left: 18px; color: var(--muted); }
@@ -882,7 +939,7 @@ th, td { padding: 12px 8px; border-bottom: 1px solid var(--line); text-align: le
 }
 .floating-action { font-size: 1.15rem; line-height: 1.4; }
 @media (max-width: 1240px) {
-  .shell, .hero-grid, .command-strip, .panel-grid, .admin-grid, .live-grid { grid-template-columns: 1fr; }
+  .shell, .hero-grid, .command-strip, .panel-grid, .admin-grid, .live-grid, .top-cards-grid { grid-template-columns: 1fr; }
   .hero-card { grid-column: span 1; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
   .floating-guide { width: min(42vw, 420px); }
