@@ -1,8 +1,8 @@
 import type { DashboardPayload, LiveAssetBoardItem } from "./types";
 
 const browserHost = typeof window !== "undefined" ? window.location.hostname : "127.0.0.1";
-const API_BASE = `http://${browserHost}:8000/api/v1`;
-const WS_BASE = `ws://${browserHost}:8000/api/v1`;
+const API_BASE = import.meta.env.VITE_API_BASE || `http://${browserHost}:8000/api/v1`;
+const WS_BASE = import.meta.env.VITE_WS_BASE || `ws://${browserHost}:8000/api/v1`;
 
 async function request<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`);

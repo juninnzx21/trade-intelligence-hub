@@ -66,6 +66,27 @@ Servicos:
 - Docs da API: `http://localhost:8000/docs`
 - WebSocket live board: `ws://localhost:8000/api/v1/market/live-board/ws`
 
+## Producao em hospedagem compartilhada
+
+O frontend aceita URL configuravel por ambiente:
+
+- `VITE_API_BASE`
+- `VITE_WS_BASE`
+
+Exemplo em [frontend/.env.production.example](</C:/Users/junin/OneDrive/Documentos/New project/frontend/.env.production.example>).
+
+O backend agora tambem aceita MySQL/MariaDB via SQLAlchemy:
+
+- `mysql+pymysql://USER:PASSWORD@localhost/DATABASE_NAME`
+
+Exemplo em [backend/.env.production.example](</C:/Users/junin/OneDrive/Documentos/New project/backend/.env.production.example>).
+
+Para hospedagem Python estilo cPanel/Passenger, o entrypoint esta em [backend/passenger_wsgi.py](</C:/Users/junin/OneDrive/Documentos/New project/backend/passenger_wsgi.py>).
+
+Script de publicacao do frontend:
+
+- [scripts/deploy_frontend.ps1](</C:/Users/junin/OneDrive/Documentos/New project/scripts/deploy_frontend.ps1>)
+
 ## Variaveis de ambiente
 
 Veja [.env.example](C:/Users/junin/OneDrive/Documentos/New%20project/.env.example).
