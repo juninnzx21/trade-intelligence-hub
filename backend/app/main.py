@@ -16,8 +16,8 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    run_migrations(engine)
     Base.metadata.create_all(bind=engine)
+    run_migrations(engine)
     if settings.seed_demo_data:
         db = SessionLocal()
         try:
