@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import (
     AuditLog,
+    AlertChannel,
     BacktestMetric,
     EconomicEvent,
     ForwardTestMetric,
@@ -14,7 +15,10 @@ from app.db.models import (
     MonitoredAsset,
     RiskProfile,
     RiskRule,
+    ScrapingSource,
+    SecurityControl,
     SystemModule,
+    UserAccount,
 )
 from app.schemas.analysis import AnalysisResponse, SnapshotInput
 from app.services.market_data import Candle, MarketDataService, calculate_indicator_snapshot
@@ -571,4 +575,33 @@ def seed_demo_dataset(db: Session) -> None:
             AuditLog(created_at=base_time - timedelta(minutes=19), actor="system", action="backtest:refresh", details="Metricas recalculadas por estrategia."),
         ]:
             db.add(audit)
+    if not db.scalars(select(UserAccount)).first():
+        for user in [
+            UserAccount(name="Admin Operator", email="admin@tradehub.local", role="admin", status="active", two_factor_enabled=1),
+            UserAccount(name="Risk Analyst", email="risk@tradehub.local", role="analyst", status="active", two_factor_enabled=1),
+            UserAccount(name="Observer Seat", email="observer@tradehub.local", role="viewer", status="pilot", two_factor_enabled=0),
+        ]:
+            db.add(user)
+    if not db.scalars(select(AlertChannel)).first():
+        for channel in [
+            AlertChannel(name="Telegram Ops", channel_type="telegram", status="planned", destination="@trade_ops", notes="Pronto para fase de alertas."),
+            AlertChannel(name="WhatsApp Desk", channel_type="whatsapp", status="planned", destination="+55-00-0000-0000", notes="Somente notificacao, nunca promessa de ganho."),
+            AlertChannel(name="Mobile Push", channel_type="push", status="observer", destination="ios/android", notes="Usado para sinais fortes e bloqueios macro."),
+        ]:
+            db.add(channel)
+    if not db.scalars(select(SecurityControl)).first():
+        for control in [
+            SecurityControl(name="API keys encryption", status="designed", severity="high", details="Chaves ficam preparadas para criptografia em repouso."),
+            SecurityControl(name="Audit logging", status="active", severity="high", details="Acoes do motor e do admin sao registradas."),
+            SecurityControl(name="2FA optional", status="planned", severity="medium", details="Usuarios premium podem exigir segundo fator."),
+            SecurityControl(name="Backup policy", status="planned", severity="medium", details="Backups diarios em VPS/Linux no roadmap operacional."),
+        ]:
+            db.add(control)
+    if not db.scalars(select(ScrapingSource)).first():
+        for source in [
+            ScrapingSource(name="Economic Calendar", scope="macro", status="observer", policy="Somente pagina publica, sem login, captcha ou bypass."),
+            ScrapingSource(name="Financial Headlines", scope="news", status="observer", policy="Manchetes publicas e metadata de impacto apenas."),
+            ScrapingSource(name="Central Bank Statements", scope="macro", status="planned", policy="Captura de comunicados publicos oficiais."),
+        ]:
+            db.add(source)
     db.commit()

@@ -1,18 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { api } from "./api";
-import type {
-  BacktestMetricItem,
-  DashboardPayload,
-  EconomicEventItem,
-  ForwardTestMetricItem,
-  LiveAssetBoardItem,
-  SignalItem
-} from "./types";
+import type { DashboardPayload, LiveAssetBoardItem, SignalItem } from "./types";
 
 const loading = ref(true);
 const error = ref("");
 const refreshingLive = ref(false);
+const exportMessage = ref("");
 const dashboard = ref<DashboardPayload | null>(null);
 const selectedMarket = ref("TODOS");
 
@@ -28,6 +22,10 @@ const riskProfile = computed(() => dashboard.value?.risk_profile ?? null);
 const backtests = computed(() => dashboard.value?.backtests ?? []);
 const forwardTests = computed(() => dashboard.value?.forward_tests ?? []);
 const audits = computed(() => dashboard.value?.audits ?? []);
+const users = computed(() => dashboard.value?.users ?? []);
+const alertChannels = computed(() => dashboard.value?.alert_channels ?? []);
+const securityControls = computed(() => dashboard.value?.security_controls ?? []);
+const scrapingSources = computed(() => dashboard.value?.scraping_sources ?? []);
 
 const filteredSignals = computed(() =>
   selectedMarket.value === "TODOS"
@@ -65,10 +63,7 @@ async function refreshLiveBoard() {
   try {
     const board = await api.refreshLiveBoard();
     if (dashboard.value) {
-      dashboard.value = {
-        ...dashboard.value,
-        live_board: board
-      };
+      dashboard.value = { ...dashboard.value, live_board: board };
     } else {
       await loadDashboard();
     }
@@ -76,6 +71,15 @@ async function refreshLiveBoard() {
     error.value = err instanceof Error ? err.message : "Falha ao atualizar a varredura";
   } finally {
     refreshingLive.value = false;
+  }
+}
+
+async function exportCsv() {
+  try {
+    const csv = await api.exportCsv();
+    exportMessage.value = `CSV pronto com ${csv.split("\n").length - 1} linhas de relatorio.`;
+  } catch (err) {
+    exportMessage.value = err instanceof Error ? err.message : "Falha ao exportar";
   }
 }
 
@@ -100,7 +104,14 @@ function impactClass(impact: string) {
 function integrationClass(status: string) {
   return {
     ativo: "decision buy",
+    active: "decision buy",
     observador: "decision neutral",
+    observer: "decision neutral",
+    planned: "decision neutral",
+    pilot: "decision neutral",
+    validando: "decision neutral",
+    em_coleta: "decision neutral",
+    designed: "decision neutral",
     "aguardando-chave": "decision neutral",
     disabled: "decision sell"
   }[status] ?? "decision neutral";
@@ -137,6 +148,31 @@ function rowClass(score: number) {
   if (score <= 50) return "row-risk";
   return "";
 }
+
+function severityClass(value: string) {
+  return {
+    high: "decision sell",
+    medium: "decision neutral",
+    low: "decision buy"
+  }[value] ?? "decision neutral";
+}
+
+function tinySeries(values: number[]) {
+  if (!values.length) return "";
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = max - min || 1;
+  return values
+    .map((value, index) => {
+      const x = (index / Math.max(values.length - 1, 1)) * 100;
+      const y = 100 - ((value - min) / range) * 100;
+      return `${x},${y}`;
+    })
+    .join(" ");
+}
+
+const scoreSeries = computed(() => tinySeries(liveBoard.value.map((item) => item.score)));
+const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => item.net_profit)));
 </script>
 
 <template>
@@ -155,12 +191,13 @@ function rowClass(score: number) {
         <a href="#macro">Macro</a>
         <a href="#lab">Lab</a>
         <a href="#admin">Admin</a>
+        <a href="#security">Security</a>
       </nav>
 
       <div class="sidebar-card">
         <p class="muted">Politica operacional</p>
         <strong>Nunca forcar entrada</strong>
-        <span>Resposta valida inclui sempre `NAO_OPERAR`. IQ Option ou qualquer corretora deve ficar fora de automacao cega.</span>
+        <span>Resposta valida inclui sempre `NAO_OPERAR`. Qualquer corretora deve ficar fora de automacao cega ate validacao estatistica.</span>
       </div>
     </aside>
 
@@ -230,6 +267,11 @@ function rowClass(score: number) {
                 <p class="eyebrow">Pulse</p>
                 <h3>Distribuicao de score</h3>
               </div>
+            </div>
+            <div class="chart-shell">
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                <polyline :points="scoreSeries" fill="none" stroke="currentColor" stroke-width="3" />
+              </svg>
             </div>
             <div class="quality-strip">
               <div v-for="item in qualityStrip" :key="item.symbol" class="quality-card">
@@ -387,6 +429,11 @@ function rowClass(score: number) {
                 <h3>Backtest e forward test</h3>
               </div>
             </div>
+            <div class="chart-shell compact">
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                <polyline :points="backtestSeries" fill="none" stroke="currentColor" stroke-width="3" />
+              </svg>
+            </div>
             <div class="lab-stack">
               <div class="lab-card" v-if="topBacktest">
                 <p class="muted">Melhor backtest</p>
@@ -522,6 +569,96 @@ function rowClass(score: number) {
             </div>
           </article>
         </section>
+
+        <section id="security" class="panel-grid lower">
+          <article class="panel wide">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Security</p>
+                <h3>Controles, usuarios e exportacao</h3>
+              </div>
+              <button class="ghost-button" @click="exportCsv">Exportar relatorio CSV</button>
+            </div>
+            <p v-if="exportMessage" class="export-note">{{ exportMessage }}</p>
+            <div class="admin-grid security-grid">
+              <div class="admin-section">
+                <h4>Security controls</h4>
+                <div class="stack">
+                  <div v-for="item in securityControls" :key="item.name" class="admin-card">
+                    <div class="row">
+                      <strong>{{ item.name }}</strong>
+                      <span :class="severityClass(item.severity)">{{ item.severity }}</span>
+                    </div>
+                    <p>{{ item.status }}</p>
+                    <small>{{ item.details }}</small>
+                  </div>
+                </div>
+              </div>
+
+              <div class="admin-section">
+                <h4>Usuarios</h4>
+                <div class="stack">
+                  <div v-for="item in users" :key="item.email" class="admin-card">
+                    <div class="row">
+                      <strong>{{ item.name }}</strong>
+                      <span :class="integrationClass(item.status)">{{ item.status }}</span>
+                    </div>
+                    <p>{{ item.role }} • {{ item.email }}</p>
+                    <small>2FA {{ item.two_factor_enabled ? "ativo" : "desligado" }}</small>
+                  </div>
+                </div>
+              </div>
+
+              <div class="admin-section">
+                <h4>Alertas e scraping</h4>
+                <div class="stack">
+                  <div v-for="item in alertChannels" :key="item.name" class="admin-card">
+                    <div class="row">
+                      <strong>{{ item.name }}</strong>
+                      <span :class="integrationClass(item.status)">{{ item.status }}</span>
+                    </div>
+                    <p>{{ item.channel_type }} • {{ item.destination }}</p>
+                    <small>{{ item.notes }}</small>
+                  </div>
+                  <div v-for="item in scrapingSources" :key="item.name" class="admin-card">
+                    <div class="row">
+                      <strong>{{ item.name }}</strong>
+                      <span :class="integrationClass(item.status)">{{ item.status }}</span>
+                    </div>
+                    <p>{{ item.scope }}</p>
+                    <small>{{ item.policy }}</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">SaaS roadmap</p>
+                <h3>Fases seguintes</h3>
+              </div>
+            </div>
+            <div class="event-list">
+              <div class="event-item">
+                <strong>Fase 6</strong>
+                <p>IA adaptativa</p>
+                <small>XGBoost, Random Forest e LSTM ficam preparados para camadas futuras de ranking.</small>
+              </div>
+              <div class="event-item">
+                <strong>Fase 7</strong>
+                <p>Alertas mobile</p>
+                <small>Telegram, WhatsApp e push apenas para sinais fortes e bloqueios relevantes.</small>
+              </div>
+              <div class="event-item">
+                <strong>Fase 8</strong>
+                <p>Multiusuario premium</p>
+                <small>RBAC, branding, planos e isolamento por workspace ficam mapeados na arquitetura.</small>
+              </div>
+            </div>
+          </article>
+        </section>
       </template>
     </main>
   </div>
@@ -531,7 +668,6 @@ function rowClass(score: number) {
 :root {
   color-scheme: dark;
   --bg: #06101c;
-  --bg-soft: #0f1b2d;
   --panel: rgba(9, 20, 38, 0.86);
   --panel-strong: rgba(10, 25, 46, 0.98);
   --line: rgba(137, 176, 205, 0.16);
@@ -757,6 +893,25 @@ p {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.chart-shell {
+  margin-top: 16px;
+  height: 110px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 10px;
+  color: var(--cyan);
+}
+
+.chart-shell.compact {
+  height: 82px;
+}
+
+.chart-shell svg {
+  width: 100%;
+  height: 100%;
+}
+
 .panel-grid .panel {
   min-height: 100%;
 }
@@ -912,7 +1067,8 @@ td {
 .lab-card small,
 .lab-metric p,
 .admin-card p,
-.admin-card small {
+.admin-card small,
+.export-note {
   color: var(--muted);
 }
 

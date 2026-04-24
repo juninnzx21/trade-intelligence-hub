@@ -137,3 +137,45 @@ class AuditLog(Base):
     actor: Mapped[str] = mapped_column(String(60))
     action: Mapped[str] = mapped_column(String(120))
     details: Mapped[str] = mapped_column(Text, default="")
+
+
+class UserAccount(Base):
+    __tablename__ = "user_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    email: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    role: Mapped[str] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(20))
+    two_factor_enabled: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AlertChannel(Base):
+    __tablename__ = "alert_channels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(60), unique=True)
+    channel_type: Mapped[str] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(20))
+    destination: Mapped[str] = mapped_column(String(120))
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class SecurityControl(Base):
+    __tablename__ = "security_controls"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    status: Mapped[str] = mapped_column(String(20))
+    severity: Mapped[str] = mapped_column(String(20))
+    details: Mapped[str] = mapped_column(Text, default="")
+
+
+class ScrapingSource(Base):
+    __tablename__ = "scraping_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    scope: Mapped[str] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(20))
+    policy: Mapped[str] = mapped_column(Text, default="")

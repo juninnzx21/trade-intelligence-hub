@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.db.base import get_db
@@ -59,6 +60,10 @@ def admin_overview(db: Session = Depends(get_db)):
         "monitored_assets": [item.model_dump() for item in dashboard.monitored_assets],
         "risk_profile": dashboard.risk_profile.model_dump(),
         "audits": [item.model_dump() for item in dashboard.audits],
+        "users": [item.model_dump() for item in dashboard.users],
+        "alert_channels": [item.model_dump() for item in dashboard.alert_channels],
+        "security_controls": [item.model_dump() for item in dashboard.security_controls],
+        "scraping_sources": [item.model_dump() for item in dashboard.scraping_sources],
     }
 
 
@@ -70,6 +75,27 @@ def backtest_overview(db: Session = Depends(get_db)):
 @router.get("/forward-test/overview")
 def forward_test_overview(db: Session = Depends(get_db)):
     return [item.model_dump() for item in build_dashboard_payload(db).forward_tests]
+
+
+@router.get("/reports/export")
+def export_report(db: Session = Depends(get_db)):
+    return build_dashboard_payload(db).model_dump()
+
+
+@router.get("/reports/export.csv", response_class=PlainTextResponse)
+def export_report_csv(db: Session = Depends(get_db)):
+    payload = build_dashboard_payload(db)
+    lines = [
+        "section,name,value,extra",
+        f"summary,total_signals,{payload.summary.total_signals},-",
+        f"summary,win_rate,{payload.summary.win_rate},-",
+        f"summary,best_symbol,{payload.summary.best_symbol},{payload.summary.best_timeframe}",
+    ]
+    for item in payload.live_board:
+        lines.append(f"live_board,{item.symbol},{item.score},{item.decision}")
+    for item in payload.backtests:
+        lines.append(f"backtest,{item.strategy_name},{item.net_profit},{item.win_rate}")
+    return "\n".join(lines)
 
 
 @router.post("/analyze", response_model=AnalysisResponse)

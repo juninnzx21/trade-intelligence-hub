@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import (
     AuditLog,
+    AlertChannel,
     BacktestMetric,
     EconomicEvent,
     ForwardTestMetric,
@@ -12,10 +13,14 @@ from app.db.models import (
     MarketSnapshot,
     MonitoredAsset,
     RiskProfile,
+    ScrapingSource,
+    SecurityControl,
     SystemModule,
+    UserAccount,
 )
 from app.schemas.analysis import (
     AssetConfigItem,
+    AlertChannelItem,
     AuditLogItem,
     BacktestMetricItem,
     DashboardPayload,
@@ -26,7 +31,10 @@ from app.schemas.analysis import (
     ModuleStatus,
     OpportunityCard,
     RiskProfileItem,
+    ScrapingSourceItem,
+    SecurityControlItem,
     SignalItem,
+    UserAccountItem,
 )
 from app.services.analysis import AnalysisEngine
 
@@ -108,6 +116,44 @@ def build_dashboard_payload(db: Session, persist_live_board: bool = False) -> Da
         )
         for item in db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc())).all()[:8]
     ]
+    users = [
+        UserAccountItem(
+            name=item.name,
+            email=item.email,
+            role=item.role,
+            status=item.status,
+            two_factor_enabled=bool(item.two_factor_enabled),
+        )
+        for item in db.scalars(select(UserAccount).order_by(UserAccount.role.asc(), UserAccount.name.asc())).all()
+    ]
+    alert_channels = [
+        AlertChannelItem(
+            name=item.name,
+            channel_type=item.channel_type,
+            status=item.status,
+            destination=item.destination,
+            notes=item.notes,
+        )
+        for item in db.scalars(select(AlertChannel).order_by(AlertChannel.name.asc())).all()
+    ]
+    security_controls = [
+        SecurityControlItem(
+            name=item.name,
+            status=item.status,
+            severity=item.severity,
+            details=item.details,
+        )
+        for item in db.scalars(select(SecurityControl).order_by(SecurityControl.name.asc())).all()
+    ]
+    scraping_sources = [
+        ScrapingSourceItem(
+            name=item.name,
+            scope=item.scope,
+            status=item.status,
+            policy=item.policy,
+        )
+        for item in db.scalars(select(ScrapingSource).order_by(ScrapingSource.name.asc())).all()
+    ]
     return DashboardPayload(
         summary=summary,
         opportunities=opportunities,
@@ -121,6 +167,10 @@ def build_dashboard_payload(db: Session, persist_live_board: bool = False) -> Da
         backtests=backtests,
         forward_tests=forward_tests,
         audits=audits,
+        users=users,
+        alert_channels=alert_channels,
+        security_controls=security_controls,
+        scraping_sources=scraping_sources,
     )
 
 

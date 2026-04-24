@@ -13,11 +13,19 @@ async function request<T>(path: string): Promise<T> {
 export const api = {
   getDashboard: () => request<DashboardPayload>("/dashboard"),
   getLiveBoard: () => request<LiveAssetBoardItem[]>("/market/live-board"),
+  getExportJson: () => request<DashboardPayload>("/reports/export"),
   refreshLiveBoard: async () => {
     const response = await fetch(`${API_BASE}/market/live-board/refresh`, { method: "POST" });
     if (!response.ok) {
       throw new Error("Falha ao atualizar a varredura ao vivo");
     }
     return response.json() as Promise<LiveAssetBoardItem[]>;
+  },
+  exportCsv: async () => {
+    const response = await fetch(`${API_BASE}/reports/export.csv`);
+    if (!response.ok) {
+      throw new Error("Falha ao exportar CSV");
+    }
+    return response.text();
   }
 };

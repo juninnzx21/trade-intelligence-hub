@@ -107,6 +107,36 @@ export interface AuditLogItem {
   details: string;
 }
 
+export interface UserAccountItem {
+  name: string;
+  email: string;
+  role: string;
+  status: string;
+  two_factor_enabled: boolean;
+}
+
+export interface AlertChannelItem {
+  name: string;
+  channel_type: string;
+  status: string;
+  destination: string;
+  notes: string;
+}
+
+export interface SecurityControlItem {
+  name: string;
+  status: string;
+  severity: string;
+  details: string;
+}
+
+export interface ScrapingSourceItem {
+  name: string;
+  scope: string;
+  status: string;
+  policy: string;
+}
+
 export interface LiveAssetBoardItem {
   symbol: string;
   market: string;
@@ -136,4 +166,8 @@ export interface DashboardPayload {
   backtests: BacktestMetricItem[];
   forward_tests: ForwardTestMetricItem[];
   audits: AuditLogItem[];
+  users: UserAccountItem[];
+  alert_channels: AlertChannelItem[];
+  security_controls: SecurityControlItem[];
+  scraping_sources: ScrapingSourceItem[];
 }

@@ -141,6 +141,36 @@ class AuditLogItem(BaseModel):
     details: str
 
 
+class UserAccountItem(BaseModel):
+    name: str
+    email: str
+    role: str
+    status: str
+    two_factor_enabled: bool
+
+
+class AlertChannelItem(BaseModel):
+    name: str
+    channel_type: str
+    status: str
+    destination: str
+    notes: str
+
+
+class SecurityControlItem(BaseModel):
+    name: str
+    status: str
+    severity: str
+    details: str
+
+
+class ScrapingSourceItem(BaseModel):
+    name: str
+    scope: str
+    status: str
+    policy: str
+
+
 class LiveAssetBoardItem(BaseModel):
     symbol: str
     market: str
@@ -170,3 +200,7 @@ class DashboardPayload(BaseModel):
     backtests: list[BacktestMetricItem]
     forward_tests: list[ForwardTestMetricItem]
     audits: list[AuditLogItem]
+    users: list[UserAccountItem]
+    alert_channels: list[AlertChannelItem]
+    security_controls: list[SecurityControlItem]
+    scraping_sources: list[ScrapingSourceItem]
