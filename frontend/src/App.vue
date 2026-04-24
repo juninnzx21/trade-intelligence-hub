@@ -10,7 +10,10 @@ const exportMessage = ref("");
 const dashboard = ref<DashboardPayload | null>(null);
 const selectedMarket = ref("TODOS");
 const autoRefreshLabel = ref("Auto-refresh ativo a cada 30s");
+const currentTime = ref(new Date());
+
 let liveRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let clockTimer: ReturnType<typeof setInterval> | null = null;
 
 const summary = computed(() => dashboard.value?.summary ?? null);
 const signals = computed(() => dashboard.value?.signals ?? []);
@@ -28,16 +31,19 @@ const alertChannels = computed(() => dashboard.value?.alert_channels ?? []);
 const securityControls = computed(() => dashboard.value?.security_controls ?? []);
 const scrapingSources = computed(() => dashboard.value?.scraping_sources ?? []);
 
-const filteredSignals = computed(() =>
-  selectedMarket.value === "TODOS"
-    ? signals.value
-    : signals.value.filter((signal) => signal.market === selectedMarket.value)
+const actionableLiveBoard = computed(() =>
+  liveBoard.value.filter((item) => item.decision === "COMPRA" || item.decision === "VENDA")
 );
 
-const headline = computed(() => liveBoard.value[0] ?? null);
-const actionableSignal = computed(
-  () => liveBoard.value.find((item) => item.decision === "COMPRA" || item.decision === "VENDA") ?? null
-);
+const filteredSignals = computed(() => {
+  const visible = signals.value.filter((signal) => signal.decision === "COMPRA" || signal.decision === "VENDA");
+  return selectedMarket.value === "TODOS"
+    ? visible
+    : visible.filter((signal) => signal.market === selectedMarket.value);
+});
+
+const headline = computed(() => actionableLiveBoard.value[0] ?? liveBoard.value[0] ?? null);
+const actionableSignal = computed(() => actionableLiveBoard.value[0] ?? null);
 
 async function loadDashboard() {
   loading.value = true;
@@ -76,6 +82,13 @@ function startLivePolling() {
   }, 30000);
 }
 
+function startClock() {
+  if (clockTimer) clearInterval(clockTimer);
+  clockTimer = setInterval(() => {
+    currentTime.value = new Date();
+  }, 1000);
+}
+
 async function exportCsv() {
   try {
     const csv = await api.exportCsv();
@@ -88,13 +101,14 @@ async function exportCsv() {
 onMounted(async () => {
   await loadDashboard();
   startLivePolling();
+  startClock();
 });
 
 onUnmounted(() => {
-  if (liveRefreshTimer) {
-    clearInterval(liveRefreshTimer);
-    liveRefreshTimer = null;
-  }
+  if (liveRefreshTimer) clearInterval(liveRefreshTimer);
+  if (clockTimer) clearInterval(clockTimer);
+  liveRefreshTimer = null;
+  clockTimer = null;
 });
 
 function decisionClass(decision: string) {
@@ -148,6 +162,10 @@ function scoreRailStyle(score: number) {
   return { width: `${Math.max(8, Math.min(score, 100))}%` };
 }
 
+function parseDate(value: string | null | undefined) {
+  return value ? new Date(value) : null;
+}
+
 function compactDate(value: string | null | undefined) {
   if (!value) return "-";
   return new Date(value).toLocaleString("pt-BR", {
@@ -155,6 +173,25 @@ function compactDate(value: string | null | undefined) {
     month: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "America/Sao_Paulo"
+  });
+}
+
+function timeOnly(value: string | null | undefined) {
+  if (!value) return "-";
+  return new Date(value).toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZone: "America/Sao_Paulo"
+  });
+}
+
+function nowLabel() {
+  return currentTime.value.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
     timeZone: "America/Sao_Paulo"
   });
 }
@@ -186,7 +223,90 @@ function tinySeries(values: number[]) {
     .join(" ");
 }
 
-const scoreSeries = computed(() => tinySeries(liveBoard.value.map((item) => item.score)));
+const floatingGuide = computed(() => {
+  const signal = actionableSignal.value;
+  if (!signal) {
+    return {
+      title: "Nao operar agora",
+      subtitle: "Nenhuma compra ou venda valida no momento.",
+      action: "Aguarde a proxima janela valida.",
+      tone: "neutral",
+      details: ["Sistema em observacao.", `Horario atual: ${nowLabel()}`]
+    };
+  }
+
+  const now = currentTime.value;
+  const entry = parseDate(signal.entry_time);
+  const exit = parseDate(signal.exit_time);
+  const validUntil = parseDate(signal.signal_valid_until);
+  const side = signal.decision === "COMPRA" ? "compra" : "venda";
+
+  if (entry && now < entry) {
+    return {
+      title: `Prepare operacao de ${side}`,
+      subtitle: `${signal.symbol} • ${signal.timeframe}`,
+      action: `Entre somente as ${timeOnly(signal.entry_time)}.`,
+      tone: signal.decision === "COMPRA" ? "buy" : "sell",
+      details: [
+        `Horario atual: ${nowLabel()}`,
+        `Entrada programada: ${timeOnly(signal.entry_time)}`,
+        `Saida prevista: ${timeOnly(signal.exit_time)}`
+      ]
+    };
+  }
+
+  if (entry && validUntil && now >= entry && now <= validUntil) {
+    return {
+      title: `Entre agora com ${side}`,
+      subtitle: `${signal.symbol} • ${signal.timeframe}`,
+      action: `Janela aberta ate ${timeOnly(signal.signal_valid_until)}.`,
+      tone: signal.decision === "COMPRA" ? "buy" : "sell",
+      details: [
+        `Horario atual: ${nowLabel()}`,
+        `Saida prevista: ${timeOnly(signal.exit_time)}`,
+        `Risco: ${signal.risk_level}`
+      ]
+    };
+  }
+
+  if (validUntil && now > validUntil && exit && now < exit) {
+    return {
+      title: "Nao entrar atrasado",
+      subtitle: `${signal.symbol} • ${signal.timeframe}`,
+      action: "Janela de entrada expirou. Aguarde novo sinal.",
+      tone: "neutral",
+      details: [
+        `Horario atual: ${nowLabel()}`,
+        `Validade encerrou em: ${timeOnly(signal.signal_valid_until)}`,
+        `Saida prevista da leitura: ${timeOnly(signal.exit_time)}`
+      ]
+    };
+  }
+
+  if (exit && now >= exit) {
+    return {
+      title: "Ciclo encerrado",
+      subtitle: `${signal.symbol} • ${signal.timeframe}`,
+      action: "Esse sinal ja passou. Aguarde a proxima oportunidade.",
+      tone: "neutral",
+      details: [
+        `Horario atual: ${nowLabel()}`,
+        `Encerramento previsto: ${timeOnly(signal.exit_time)}`,
+        "Nao perseguir entrada vencida."
+      ]
+    };
+  }
+
+  return {
+    title: "Nao operar agora",
+    subtitle: `${signal.symbol} • ${signal.timeframe}`,
+    action: "Contexto sem janela segura neste instante.",
+    tone: "neutral",
+    details: [`Horario atual: ${nowLabel()}`]
+  };
+});
+
+const scoreSeries = computed(() => tinySeries(actionableLiveBoard.value.map((item) => item.score)));
 const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => item.net_profit)));
 </script>
 
@@ -233,30 +353,6 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
       <section v-else-if="error" class="state-card error">{{ error }}</section>
 
       <template v-else-if="dashboard && summary && riskProfile">
-        <section
-          v-if="actionableSignal"
-          class="action-callout"
-          :class="actionableSignal.decision === 'COMPRA' ? 'action-callout-buy' : 'action-callout-sell'"
-        >
-          <div>
-            <p class="eyebrow">Alerta operacional</p>
-            <h3>
-              Entre com operacao de {{ actionableSignal.decision === "COMPRA" ? "compra" : "venda" }}
-              em {{ actionableSignal.symbol }}
-            </h3>
-            <p class="hero-subtitle">
-              Entrada sugerida para {{ compactDate(actionableSignal.entry_time) }} • saida em
-              {{ compactDate(actionableSignal.exit_time) }} • validade curta ate
-              {{ compactDate(actionableSignal.signal_valid_until) }}
-            </p>
-          </div>
-          <div class="action-callout-meta">
-            <span :class="decisionClass(actionableSignal.decision)">{{ actionableSignal.decision }}</span>
-            <strong>Score {{ actionableSignal.score }}</strong>
-            <small>Risco {{ actionableSignal.risk_level }} • {{ actionableSignal.duration ?? "-" }}</small>
-          </div>
-        </section>
-
         <section id="command" class="hero-grid">
           <article class="hero-card">
             <div class="hero-copy">
@@ -278,9 +374,9 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
           </article>
 
           <article class="metric-card">
-            <span>Total de sinais</span>
-            <strong>{{ summary.total_signals }}</strong>
-            <small class="muted">Compra {{ summary.buy_signals }} • Venda {{ summary.sell_signals }} • Nao operar {{ summary.no_trade_signals }}</small>
+            <span>Sinais exibidos</span>
+            <strong>{{ actionableLiveBoard.length }}</strong>
+            <small class="muted">Somente compra e venda visiveis na operacao.</small>
           </article>
           <article class="metric-card">
             <span>Win rate fechado</span>
@@ -347,13 +443,13 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Live Board</p>
-                <h3>Varredura multiativo com horario sugerido</h3>
+                <h3>Somente operacoes validas no radar</h3>
               </div>
               <div class="badge">Observer only</div>
             </div>
 
-            <div class="live-grid">
-              <article v-for="item in liveBoard" :key="`${item.symbol}-${item.timeframe}`" class="opportunity-card">
+            <div v-if="actionableLiveBoard.length" class="live-grid">
+              <article v-for="item in actionableLiveBoard" :key="`${item.symbol}-${item.timeframe}`" class="opportunity-card">
                 <div class="row">
                   <div>
                     <strong>{{ item.symbol }}</strong>
@@ -385,9 +481,10 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
                 <ul>
                   <li v-for="reason in item.reasons.slice(0, 4)" :key="reason">{{ reason }}</li>
                 </ul>
-
-                <p v-if="item.block_reasons.length" class="blockers">Bloqueios: {{ item.block_reasons.join(" • ") }}</p>
               </article>
+            </div>
+            <div v-else class="empty-state">
+              Nenhuma compra ou venda valida agora. O sistema esta corretamente evitando operacao ruim.
             </div>
             <p class="panel-note">Horarios exibidos em America/Sao_Paulo. A varredura ao vivo atualiza automaticamente a cada 30 segundos.</p>
           </article>
@@ -417,7 +514,7 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
             <div class="panel-header">
               <div>
                 <p class="eyebrow">Signal Journal</p>
-                <h3>Todos os sinais, inclusive os ruins</h3>
+                <h3>Historico visivel apenas de compra e venda</h3>
               </div>
               <select v-model="selectedMarket" class="market-filter">
                 <option value="TODOS">Todos</option>
@@ -426,7 +523,7 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
               </select>
             </div>
 
-            <div class="table-shell">
+            <div v-if="filteredSignals.length" class="table-shell">
               <table>
                 <thead>
                   <tr>
@@ -455,6 +552,9 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
                   </tr>
                 </tbody>
               </table>
+            </div>
+            <div v-else class="empty-state">
+              Ainda nao ha compras ou vendas para exibir neste filtro.
             </div>
           </article>
 
@@ -633,6 +733,16 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
         </section>
       </template>
     </main>
+
+    <aside class="floating-guide" :class="`floating-guide-${floatingGuide.tone}`">
+      <p class="eyebrow">Acao agora</p>
+      <h3>{{ floatingGuide.title }}</h3>
+      <p class="floating-subtitle">{{ floatingGuide.subtitle }}</p>
+      <strong class="floating-action">{{ floatingGuide.action }}</strong>
+      <ul class="floating-details">
+        <li v-for="detail in floatingGuide.details" :key="detail">{{ detail }}</li>
+      </ul>
+    </aside>
   </div>
 </template>
 
@@ -666,16 +776,12 @@ h1, h2, h3, h4, p { margin: 0; }
 .sidebar { padding: 28px; border-right: 1px solid var(--line); background: rgba(3, 9, 18, 0.82); backdrop-filter: blur(16px); display: flex; flex-direction: column; gap: 26px; }
 .brand { display: grid; gap: 8px; }
 .sidebar nav { display: grid; gap: 12px; }
-.sidebar nav a, .sidebar-card, .panel, .metric-card, .hero-card, .state-card, .strip-panel, .action-callout { background: var(--panel); border: 1px solid var(--line); border-radius: 24px; backdrop-filter: blur(18px); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22); }
+.sidebar nav a, .sidebar-card, .panel, .metric-card, .hero-card, .state-card, .strip-panel, .floating-guide { background: var(--panel); border: 1px solid var(--line); border-radius: 24px; backdrop-filter: blur(18px); box-shadow: 0 24px 80px rgba(0, 0, 0, 0.22); }
 .sidebar nav a { padding: 13px 14px; color: var(--muted); }
 .sidebar nav a:hover { color: var(--text); border-color: rgba(70, 208, 213, 0.35); }
 .sidebar-card { padding: 18px; display: grid; gap: 8px; }
-.content { padding: 28px; display: grid; gap: 20px; }
+.content { padding: 28px 28px 140px; display: grid; gap: 20px; }
 .topbar, .panel-header, .row, .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.action-callout { padding: 24px 28px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.action-callout-buy { background: linear-gradient(135deg, rgba(145, 217, 113, 0.22), rgba(9, 20, 38, 0.96)); border-color: rgba(145, 217, 113, 0.36); box-shadow: 0 28px 90px rgba(145, 217, 113, 0.16); }
-.action-callout-sell { background: linear-gradient(135deg, rgba(255, 127, 146, 0.2), rgba(9, 20, 38, 0.96)); border-color: rgba(255, 127, 146, 0.36); box-shadow: 0 28px 90px rgba(255, 127, 146, 0.16); }
-.action-callout-meta { display: grid; justify-items: end; gap: 8px; min-width: 180px; }
 .hero-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
 .hero-card { grid-column: span 2; padding: 28px; display: flex; justify-content: space-between; align-items: center; background: linear-gradient(140deg, rgba(70, 208, 213, 0.16), rgba(13, 25, 46, 0.94)), var(--panel-strong); }
 .hero-copy { display: grid; gap: 12px; }
@@ -695,7 +801,7 @@ h1, h2, h3, h4, p { margin: 0; }
 .live-grid { margin-top: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .opportunity-card, .event-item, .admin-card { padding: 16px; border-radius: 18px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); }
 .stats-grid, .indicator-grid { margin-top: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); color: var(--muted); font-size: 0.9rem; }
-.opportunity-card ul { margin: 14px 0 0; padding-left: 18px; color: var(--muted); }
+.opportunity-card ul, .floating-details { margin: 14px 0 0; padding-left: 18px; color: var(--muted); }
 .blockers { margin-top: 12px; color: var(--amber); font-size: 0.92rem; }
 .score-bar { height: 10px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,0.06); margin-top: 14px; }
 .fill { height: 100%; background: linear-gradient(90deg, var(--cyan), var(--lime)); }
@@ -713,20 +819,56 @@ th, td { padding: 12px 8px; border-bottom: 1px solid var(--line); text-align: le
 .primary-button:disabled { opacity: 0.65; cursor: wait; }
 .state-card { padding: 28px; }
 .state-card.error { border-color: rgba(255,127,146,0.35); color: var(--rose); }
-.eyebrow, .muted, .hero-subtitle, .event-item p, .event-item small, .admin-card p, .admin-card small, .export-note, .panel-note { color: var(--muted); }
+.eyebrow, .muted, .hero-subtitle, .event-item p, .event-item small, .admin-card p, .admin-card small, .export-note, .panel-note, .floating-subtitle { color: var(--muted); }
 .admin-grid { margin-top: 18px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .admin-section { display: grid; gap: 12px; }
 .panel-note { margin-top: 16px; font-size: 0.92rem; }
+.empty-state { margin-top: 18px; padding: 18px; border-radius: 18px; border: 1px dashed rgba(255,255,255,0.09); color: var(--muted); background: rgba(255,255,255,0.02); }
+.floating-guide {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  width: min(25vw, 420px);
+  min-width: 320px;
+  min-height: 25vh;
+  padding: 22px;
+  z-index: 40;
+  display: grid;
+  gap: 12px;
+}
+.floating-guide-buy {
+  background: linear-gradient(135deg, rgba(145, 217, 113, 0.22), rgba(9, 20, 38, 0.96));
+  border-color: rgba(145, 217, 113, 0.34);
+}
+.floating-guide-sell {
+  background: linear-gradient(135deg, rgba(255, 127, 146, 0.22), rgba(9, 20, 38, 0.96));
+  border-color: rgba(255, 127, 146, 0.34);
+}
+.floating-guide-neutral {
+  background: linear-gradient(135deg, rgba(255, 187, 99, 0.18), rgba(9, 20, 38, 0.96));
+  border-color: rgba(255, 187, 99, 0.28);
+}
+.floating-action { font-size: 1.15rem; line-height: 1.4; }
 @media (max-width: 1240px) {
   .shell, .hero-grid, .command-strip, .panel-grid, .admin-grid, .live-grid { grid-template-columns: 1fr; }
   .hero-card { grid-column: span 1; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
-  .action-callout { flex-direction: column; align-items: flex-start; }
-  .action-callout-meta { justify-items: start; }
+  .floating-guide {
+    width: min(42vw, 420px);
+  }
 }
 @media (max-width: 720px) {
   .content, .sidebar { padding: 18px; }
+  .content { padding-bottom: 260px; }
   .topbar, .actions, .hero-card { flex-direction: column; align-items: flex-start; }
   .policy-grid, .stats-grid, .indicator-grid { grid-template-columns: 1fr; }
+  .floating-guide {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    width: auto;
+    min-width: 0;
+    min-height: 0;
+  }
 }
 </style>
