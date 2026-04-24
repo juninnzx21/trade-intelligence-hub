@@ -64,11 +64,7 @@ async function refreshLiveBoard() {
   error.value = "";
   try {
     const board = await api.refreshLiveBoard();
-    if (dashboard.value) {
-      dashboard.value = { ...dashboard.value, live_board: board };
-    } else {
-      await loadDashboard();
-    }
+    applyLiveBoard(board);
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Falha ao atualizar a varredura";
   } finally {
@@ -229,6 +225,10 @@ function nowLabel() {
   });
 }
 
+function assetLabel(symbol: string | null | undefined) {
+  return symbol ? `Moeda/par ${symbol}` : "Moeda/par indisponivel";
+}
+
 function reasonsText(item: LiveAssetBoardItem | SignalItem) {
   if ("reasons" in item) {
     return item.reasons.join(" • ");
@@ -277,12 +277,12 @@ const floatingGuide = computed(() => {
   if (entry && now < entry) {
     return {
       title: `Prepare operacao de ${side}`,
-      subtitle: `${signal.symbol} • ${signal.timeframe}`,
+      subtitle: `${assetLabel(signal.symbol)} • ${signal.timeframe}`,
       action: `Entre somente as ${timeOnly(signal.entry_time)}.`,
       tone: signal.decision === "COMPRA" ? "buy" : "sell",
       details: [
         `Horario atual: ${nowLabel()}`,
-        `Entrada programada: ${timeOnly(signal.entry_time)}`,
+        `Moeda/par: ${signal.symbol}`,
         `Saida prevista: ${timeOnly(signal.exit_time)}`
       ]
     };
@@ -291,13 +291,13 @@ const floatingGuide = computed(() => {
   if (entry && validUntil && now >= entry && now <= validUntil) {
     return {
       title: `Entre agora com ${side}`,
-      subtitle: `${signal.symbol} • ${signal.timeframe}`,
+      subtitle: `${assetLabel(signal.symbol)} • ${signal.timeframe}`,
       action: `Janela aberta ate ${timeOnly(signal.signal_valid_until)}.`,
       tone: signal.decision === "COMPRA" ? "buy" : "sell",
       details: [
         `Horario atual: ${nowLabel()}`,
-        `Saida prevista: ${timeOnly(signal.exit_time)}`,
-        `Risco: ${signal.risk_level}`
+        `Moeda/par: ${signal.symbol}`,
+        `Saida prevista: ${timeOnly(signal.exit_time)}`
       ]
     };
   }
@@ -305,13 +305,13 @@ const floatingGuide = computed(() => {
   if (validUntil && now > validUntil && exit && now < exit) {
     return {
       title: "Nao entrar atrasado",
-      subtitle: `${signal.symbol} • ${signal.timeframe}`,
+      subtitle: `${assetLabel(signal.symbol)} • ${signal.timeframe}`,
       action: "Janela de entrada expirou. Aguarde novo sinal.",
       tone: "neutral",
       details: [
         `Horario atual: ${nowLabel()}`,
-        `Validade encerrou em: ${timeOnly(signal.signal_valid_until)}`,
-        `Saida prevista da leitura: ${timeOnly(signal.exit_time)}`
+        `Moeda/par: ${signal.symbol}`,
+        `Validade encerrou em: ${timeOnly(signal.signal_valid_until)}`
       ]
     };
   }
@@ -319,23 +319,23 @@ const floatingGuide = computed(() => {
   if (exit && now >= exit) {
     return {
       title: "Ciclo encerrado",
-      subtitle: `${signal.symbol} • ${signal.timeframe}`,
+      subtitle: `${assetLabel(signal.symbol)} • ${signal.timeframe}`,
       action: "Esse sinal ja passou. Aguarde a proxima oportunidade.",
       tone: "neutral",
       details: [
         `Horario atual: ${nowLabel()}`,
-        `Encerramento previsto: ${timeOnly(signal.exit_time)}`,
-        "Nao perseguir entrada vencida."
+        `Moeda/par: ${signal.symbol}`,
+        `Encerramento previsto: ${timeOnly(signal.exit_time)}`
       ]
     };
   }
 
   return {
     title: "Nao operar agora",
-    subtitle: `${signal.symbol} • ${signal.timeframe}`,
+    subtitle: `${assetLabel(signal.symbol)} • ${signal.timeframe}`,
     action: "Contexto sem janela segura neste instante.",
     tone: "neutral",
-    details: [`Horario atual: ${nowLabel()}`]
+    details: [`Horario atual: ${nowLabel()}`, `Moeda/par: ${signal.symbol}`]
   };
 });
 
@@ -392,7 +392,7 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
               <p class="eyebrow">Sinal lider</p>
               <h3>{{ headline?.decision ?? "NAO_OPERAR" }}</h3>
               <p class="hero-subtitle">
-                {{ headline?.symbol ?? "Aguardando" }} • score {{ headline?.score ?? 0 }} • risco {{ headline?.risk_level ?? "Alto" }}
+                {{ assetLabel(headline?.symbol) }} • score {{ headline?.score ?? 0 }} • risco {{ headline?.risk_level ?? "Alto" }}
               </p>
               <div class="chip-row">
                 <span class="ghost-chip">Entrada (Brasilia): {{ compactDate(headline?.entry_time) }}</span>
@@ -485,7 +485,7 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
               <article v-for="item in actionableLiveBoard" :key="`${item.symbol}-${item.timeframe}`" class="opportunity-card">
                 <div class="row">
                   <div>
-                    <strong>{{ item.symbol }}</strong>
+                    <strong>{{ assetLabel(item.symbol) }}</strong>
                     <p>{{ item.market }} • {{ item.timeframe }} • {{ item.provider }}</p>
                   </div>
                   <span :class="decisionClass(item.decision)">{{ item.decision }}</span>
@@ -561,7 +561,7 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
                 <thead>
                   <tr>
                     <th>Gerado em</th>
-                    <th>Ativo</th>
+                    <th>Moeda/Par</th>
                     <th>TF</th>
                     <th>Decisao</th>
                     <th>Entrada</th>
@@ -574,7 +574,7 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
                 <tbody>
                   <tr v-for="signal in filteredSignals" :key="signal.id" :class="rowClass(signal.score)">
                     <td>{{ compactDate(signal.timestamp) }}</td>
-                    <td>{{ signal.symbol }}</td>
+                    <td>{{ assetLabel(signal.symbol) }}</td>
                     <td>{{ signal.timeframe }}</td>
                     <td><span :class="decisionClass(signal.decision)">{{ signal.decision }}</span></td>
                     <td>{{ compactDate(signal.entry_time) }}</td>
@@ -606,7 +606,7 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
             <div class="event-list">
               <div v-for="item in backtests" :key="`${item.strategy_name}-${item.symbol}`" class="event-item">
                 <strong>{{ item.strategy_name }}</strong>
-                <p>{{ item.symbol }} • {{ item.timeframe }}</p>
+                <p>{{ assetLabel(item.symbol) }} • {{ item.timeframe }}</p>
                 <small>Win rate {{ item.win_rate }}% • payoff {{ item.payoff }} • drawdown {{ item.drawdown }}%</small>
               </div>
             </div>
@@ -641,7 +641,7 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
                 <div class="stack">
                   <div v-for="item in monitoredAssets" :key="item.symbol" class="admin-card">
                     <div class="row">
-                      <strong>{{ item.symbol }}</strong>
+                      <strong>{{ assetLabel(item.symbol) }}</strong>
                       <span :class="item.enabled ? 'decision buy' : 'decision sell'">{{ item.enabled ? "ativo" : "off" }}</span>
                     </div>
                     <p>{{ item.market }} • {{ item.provider }}</p>
@@ -835,7 +835,6 @@ h1, h2, h3, h4, p { margin: 0; }
 .opportunity-card, .event-item, .admin-card { padding: 16px; border-radius: 18px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); }
 .stats-grid, .indicator-grid { margin-top: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); color: var(--muted); font-size: 0.9rem; }
 .opportunity-card ul, .floating-details { margin: 14px 0 0; padding-left: 18px; color: var(--muted); }
-.blockers { margin-top: 12px; color: var(--amber); font-size: 0.92rem; }
 .score-bar { height: 10px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,0.06); margin-top: 14px; }
 .fill { height: 100%; background: linear-gradient(90deg, var(--cyan), var(--lime)); }
 .table-shell { overflow: auto; margin-top: 18px; }
@@ -886,9 +885,7 @@ th, td { padding: 12px 8px; border-bottom: 1px solid var(--line); text-align: le
   .shell, .hero-grid, .command-strip, .panel-grid, .admin-grid, .live-grid { grid-template-columns: 1fr; }
   .hero-card { grid-column: span 1; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
-  .floating-guide {
-    width: min(42vw, 420px);
-  }
+  .floating-guide { width: min(42vw, 420px); }
 }
 @media (max-width: 720px) {
   .content, .sidebar { padding: 18px; }
