@@ -39,6 +39,7 @@ from app.schemas.analysis import (
     UserAccountItem,
 )
 from app.services.analysis import AnalysisEngine
+from app.services.live_feed import cache_live_board
 
 
 def build_dashboard_payload(db: Session, persist_live_board: bool = False) -> DashboardPayload:
@@ -297,4 +298,6 @@ def build_live_board(db: Session, persist: bool = False) -> list[LiveAssetBoardI
                 indicator_snapshot=analysis.indicator_snapshot,
             )
         )
-    return sorted(board, key=lambda item: item.score, reverse=True)
+    board = sorted(board, key=lambda item: item.score, reverse=True)
+    cache_live_board(board)
+    return board

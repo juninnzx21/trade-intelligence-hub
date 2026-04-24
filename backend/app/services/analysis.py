@@ -1,15 +1,18 @@
+from __future__ import annotations
+
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.logging import log_event
+from app.core.time import utc_now
 from app.db.models import (
+    AlertChannel,
     ApiConnection,
     Asset,
     AuditLog,
-    AlertChannel,
     BacktestMetric,
     CandleRecord,
     DecisionSignal,
@@ -31,11 +34,14 @@ from app.db.models import (
     UserAccount,
 )
 from app.schemas.analysis import AnalysisResponse, SnapshotInput
+from app.services.engines.fundamental_engine import calculate_fundamental_score
+from app.services.engines.historical_engine import calculate_historical_score
+from app.services.engines.risk_engine import adjust_for_validation
+from app.services.engines.scoring_engine import calculate_final_score, decision_from_score, risk_level_from_context
+from app.services.engines.signal_timing_engine import build_signal_timing
+from app.services.engines.signal_validation_engine import validate_signal
+from app.services.engines.technical_engine import calculate_technical_score
 from app.services.market_data import Candle, MarketDataService, calculate_indicator_snapshot
-
-
-TIMEFRAME_TO_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}
-BRAZIL_TZ = ZoneInfo("America/Sao_Paulo")
 
 
 class AnalysisEngine:
@@ -45,53 +51,45 @@ class AnalysisEngine:
 
     def analyze(self, payload: SnapshotInput, indicator_snapshot: dict[str, float | str | bool] | None = None) -> AnalysisResponse:
         snapshot = indicator_snapshot or self._indicator_snapshot_from_payload(payload)
-        blockers = self._evaluate_blockers(payload, snapshot)
-        technical_score, technical_reasons = self._technical_score(payload, snapshot)
-        fundamental_score, fundamental_reasons = self._fundamental_score(payload)
-        historical_score, historical_reasons = self._historical_score(payload, snapshot)
+        technical = calculate_technical_score(payload, snapshot)
+        fundamental = calculate_fundamental_score(self.db, payload)
+        historical = calculate_historical_score(self.db, payload, snapshot)
+        timing = build_signal_timing(payload)
+        validation = validate_signal(self.db, payload, snapshot, timing)
 
-        final_score = round((technical_score * 0.45) + (fundamental_score * 0.25) + (historical_score * 0.30), 2)
-        reasons = technical_reasons + fundamental_reasons + historical_reasons
-        entry_time, exit_time, duration_minutes, duration_reason, valid_until = self._signal_timing(payload)
+        final_score = calculate_final_score(technical.score, fundamental.score, historical.score)
+        final_score = adjust_for_validation(final_score, validation)
+        reasons = technical.reasons + fundamental.reasons + historical.reasons
+        decision = "NAO_OPERAR" if validation.blockers else decision_from_score(final_score, payload.trend)
+        risk_level = "Alto" if validation.blockers else risk_level_from_context(final_score, payload.volatility, payload.spread)
 
-        if blockers:
-            final_score = min(final_score, 50)
-            decision = "NAO_OPERAR"
-            risk_level = "Alto"
-            entry_time = None
-            exit_time = None
-            duration_minutes = None
-            duration_reason = None
-            valid_until = None
-        else:
-            decision = self._decision_from_score(final_score, payload.trend)
-            risk_level = self._risk_level(final_score, payload.volatility, payload.spread)
-            if decision == "NAO_OPERAR":
-                entry_time = None
-                exit_time = None
-                duration_minutes = None
-                duration_reason = None
-                valid_until = None
+        if decision == "NAO_OPERAR":
+            timing.entry_time = None
+            timing.exit_time = None
+            timing.duration_minutes = None
+            timing.duration_label = None
+            timing.duration_reason = None
+            timing.signal_valid_until = None
 
         return AnalysisResponse(
             symbol=payload.symbol,
             timeframe=payload.timeframe,
             decision=decision,
             score=final_score,
-            technical_score=technical_score,
-            fundamental_score=fundamental_score,
-            historical_score=historical_score,
+            technical_score=technical.score,
+            fundamental_score=fundamental.score,
+            historical_score=historical.score,
             risk_level=risk_level,
-            entry_time=entry_time,
-            exit_time=exit_time,
-            duration=f"{duration_minutes} minutos" if duration_minutes and duration_minutes < 60 else ("1 hora" if duration_minutes == 60 else None),
-            duration_minutes=duration_minutes,
-            duration_reason=duration_reason,
-            signal_valid_until=valid_until,
-            technical_reasons=technical_reasons[:5],
-            fundamental_reasons=(fundamental_reasons + historical_reasons)[:5],
-            block_reasons=blockers,
-            reasons=reasons[:6],
+            entry_time=timing.entry_time,
+            exit_time=timing.exit_time,
+            duration=timing.duration_label,
+            duration_minutes=timing.duration_minutes,
+            duration_reason=timing.duration_reason,
+            signal_valid_until=timing.signal_valid_until,
+            technical_reasons=technical.reasons[:5],
+            fundamental_reasons=(fundamental.reasons + historical.reasons + validation.warnings)[:6],
+            block_reasons=validation.blockers,
+            reasons=reasons[:8],
             warning="Sinal apenas para analise. Nao executa ordens reais.",
             indicator_snapshot=snapshot,
         )
@@ -168,7 +166,7 @@ class AnalysisEngine:
         self.db.add(signal)
         self.db.add(
             AuditLog(
-                created_at=datetime.now(UTC),
+                created_at=utc_now(),
                 actor="system",
                 action=f"signal:{analysis.decision}",
                 details=f"{payload.symbol} {payload.timeframe} score={analysis.score}",
@@ -176,7 +174,7 @@ class AnalysisEngine:
         )
         self.db.add(
             SystemLog(
-                created_at=datetime.now(UTC),
+                created_at=utc_now(),
                 level="INFO",
                 module="analysis_engine",
                 message=f"{payload.symbol} {payload.timeframe} -> {analysis.decision} score={analysis.score}",
@@ -201,6 +199,14 @@ class AnalysisEngine:
                 )
             )
             self.db.commit()
+        log_event(
+            "info",
+            "analysis_saved",
+            asset=payload.symbol,
+            timeframe=payload.timeframe,
+            decision=analysis.decision,
+            score=analysis.score,
+        )
         return snapshot
 
     def analyze_live_asset(self, symbol: str, market: str, timeframe: str, persist: bool = False) -> AnalysisResponse:
@@ -228,207 +234,6 @@ class AnalysisEngine:
             self.save_analysis(payload, analysis)
         return analysis
 
-    def _signal_timing(self, payload: SnapshotInput) -> tuple[datetime, datetime, int, str, datetime]:
-        minutes = TIMEFRAME_TO_MINUTES.get(payload.timeframe, 5)
-        candle_open = payload.timestamp.astimezone(BRAZIL_TZ).replace(second=0, microsecond=0)
-        now = datetime.now(BRAZIL_TZ).replace(second=0, microsecond=0)
-        entry_time = candle_open + timedelta(minutes=minutes)
-        advanced_limit = candle_open + timedelta(minutes=max(1, int(minutes * 0.6)))
-        if now > advanced_limit:
-            entry_time = candle_open + timedelta(minutes=minutes)
-        if entry_time <= now:
-            entry_time = entry_time + timedelta(minutes=minutes)
-        exit_time = entry_time + timedelta(minutes=minutes)
-        valid_until = entry_time + timedelta(minutes=1 if minutes <= 5 else 2 if minutes == 15 else 5)
-        duration_reason = (
-            "Duracao alinhada ao timeframe e ao fechamento do proximo candle valido em horario de Brasilia."
-            if minutes < 60
-            else "Duracao mais longa porque a leitura usa estrutura de 1 hora em horario de Brasilia."
-        )
-        return entry_time, exit_time, minutes, duration_reason, valid_until
-
-    def _evaluate_blockers(self, payload: SnapshotInput, snapshot: dict[str, float | str | bool]) -> list[str]:
-        blockers: list[str] = []
-        if payload.spread > 2.5:
-            blockers.append("Spread elevado para o contexto atual.")
-        if payload.volatility > 4.2:
-            blockers.append("Volatilidade anormal detectada.")
-        if "FOMC" in payload.context_news.upper() or "PAYROLL" in payload.context_news.upper():
-            blockers.append("Noticia macro de alto impacto muito proxima.")
-        candle_range = payload.high - payload.low
-        body = abs(payload.close - payload.open)
-        if candle_range and body / candle_range > 0.85:
-            blockers.append("Candle excessivamente esticado.")
-        if payload.trend.lower() == "lateral" and payload.volatility < 0.5:
-            blockers.append("Mercado em lateralizacao extrema.")
-        if bool(snapshot["lateral"]):
-            blockers.append("Mercado sem direcao clara.")
-        recent = self.db.scalars(
-            select(MarketSnapshot).where(MarketSnapshot.symbol == payload.symbol).order_by(MarketSnapshot.created_at.desc())
-        ).all()[:6]
-        negative_streak = 0
-        for item in recent:
-            if item.future_result.upper() in {"LOSS", "NEGATIVE"}:
-                negative_streak += 1
-            else:
-                break
-        if negative_streak >= 3:
-            blockers.append("Sequencia ruim recente para o ativo.")
-        return blockers
-
-    def _technical_score(self, payload: SnapshotInput, snapshot: dict[str, float | str | bool]) -> tuple[float, list[str]]:
-        score = 48.0
-        reasons: list[str] = []
-        body = payload.close - payload.open
-        amplitude = max(payload.high - payload.low, 0.0001)
-
-        if str(snapshot["trend_primary"]).lower() in {"alta", "bullish"}:
-            score += 12
-            reasons.append("Tendencia primaria de alta confirmada.")
-        elif str(snapshot["trend_primary"]).lower() in {"baixa", "bearish"}:
-            score += 12
-            reasons.append("Tendencia primaria de baixa confirmada.")
-        else:
-            score -= 8
-            reasons.append("Estrutura tecnica sem direcao limpa.")
-
-        if str(snapshot["trend_secondary"]) == str(snapshot["trend_primary"]) and str(snapshot["trend_primary"]) != "lateral":
-            score += 8
-            reasons.append("Tendencia secundaria confirma a direcao principal.")
-
-        if body > 0 and payload.close > (payload.low + amplitude * 0.65):
-            score += 8
-            reasons.append("Fechamento forte perto da maxima.")
-        elif body < 0 and payload.close < (payload.low + amplitude * 0.35):
-            score += 8
-            reasons.append("Pressao vendedora consistente no candle.")
-
-        if 0.6 <= payload.volatility <= 2.4:
-            score += 10
-            reasons.append("Volatilidade operacional saudavel.")
-        else:
-            score -= 6
-            reasons.append("Volatilidade fora da faixa ideal.")
-
-        rsi = float(snapshot["rsi"])
-        if 48 <= rsi <= 66 and str(snapshot["trend_primary"]) == "alta":
-            score += 8
-            reasons.append("RSI sustenta continuidade sem exaustao.")
-        elif 34 <= rsi <= 52 and str(snapshot["trend_primary"]) == "baixa":
-            score += 8
-            reasons.append("RSI confirma dominancia vendedora sem saturacao.")
-        elif rsi > 75 or rsi < 25:
-            score -= 8
-            reasons.append("RSI em zona de exaustao eleva risco de reversao.")
-
-        if float(snapshot["macd"]) > float(snapshot["macd_signal"]) and str(snapshot["trend_primary"]) == "alta":
-            score += 7
-            reasons.append("MACD acima do sinal reforca momentum comprador.")
-        elif float(snapshot["macd"]) < float(snapshot["macd_signal"]) and str(snapshot["trend_primary"]) == "baixa":
-            score += 7
-            reasons.append("MACD abaixo do sinal reforca momentum vendedor.")
-
-        if bool(snapshot["breakout"]):
-            score += 6
-            reasons.append("Preco testa rompimento de estrutura relevante.")
-        if bool(snapshot["pullback"]):
-            score += 5
-            reasons.append("Pullback tecnico oferece ponto mais limpo.")
-        if bool(snapshot["lateral"]):
-            score -= 10
-
-        if float(snapshot["candle_strength"]) >= 0.68:
-            score += 4
-            reasons.append("Forca do candle favorece continuacao.")
-
-        pattern = str(snapshot["pattern"])
-        if pattern in {"engolfo_de_alta", "engolfo_de_baixa"}:
-            score += 5
-            reasons.append(f"Padrao de candle relevante detectado: {pattern}.")
-
-        momentum_pct = float(snapshot["momentum_pct"])
-        if 0.12 <= abs(momentum_pct) <= 1.8:
-            score += 4
-            reasons.append("Momentum equilibrado para continuidade.")
-        elif abs(momentum_pct) > 2.8:
-            score -= 5
-            reasons.append("Momentum excessivo sugere movimento esticado.")
-
-        if payload.volume > 0:
-            if payload.volume >= 10000:
-                score += 6
-                reasons.append("Volume reforca o movimento.")
-            else:
-                score -= 3
-                reasons.append("Volume ainda sem conviccao.")
-
-        if payload.spread <= 1.0:
-            score += 6
-            reasons.append("Spread favoravel para execucao.")
-        else:
-            score -= min(payload.spread * 3, 10)
-
-        return max(0.0, min(round(score, 2), 100.0)), reasons
-
-    def _fundamental_score(self, payload: SnapshotInput) -> tuple[float, list[str]]:
-        score = 55.0
-        reasons: list[str] = []
-        now = payload.timestamp.astimezone(timezone.utc)
-        window_start = now - timedelta(hours=2)
-        window_end = now + timedelta(hours=3)
-        events = self.db.scalars(
-            select(EconomicEvent).where(EconomicEvent.event_time >= window_start, EconomicEvent.event_time <= window_end)
-        ).all()
-
-        high_impact = [event for event in events if event.impact.upper() == "ALTO"]
-        if high_impact:
-            score -= 18
-            reasons.append("Agenda economica carregada com evento de alto impacto.")
-        else:
-            score += 10
-            reasons.append("Sem noticia forte proxima.")
-
-        context = payload.context_news.lower()
-        positive_terms = ("desinflacao", "liquidez", "corte de juros", "risk-on")
-        negative_terms = ("guerra", "crise", "hawkish", "inflacao persistente", "fomc", "payroll")
-        if any(term in context for term in positive_terms):
-            score += 8
-            reasons.append("Fluxo macro levemente favoravel ao ativo.")
-        if any(term in context for term in negative_terms):
-            score -= 10
-            reasons.append("Sentimento macro pressiona a leitura atual.")
-
-        return max(0.0, min(round(score, 2), 100.0)), reasons
-
-    def _historical_score(self, payload: SnapshotInput, snapshot: dict[str, float | str | bool]) -> tuple[float, list[str]]:
-        score = 52.0
-        reasons: list[str] = []
-        similar = self.db.scalars(
-            select(MarketSnapshot).where(
-                MarketSnapshot.symbol == payload.symbol,
-                MarketSnapshot.timeframe == payload.timeframe,
-                MarketSnapshot.trend == payload.trend,
-            )
-        ).all()
-
-        if not similar:
-            reasons.append("Base historica inicial ainda curta para esse contexto.")
-            return score, reasons
-
-        successful = [item for item in similar if item.future_result.upper() in {"WIN", "TARGET", "POSITIVE"}]
-        success_rate = len(successful) / len(similar)
-        score += success_rate * 30
-        reasons.append(f"Historico semelhante indica taxa positiva de {round(success_rate * 100, 1)}%.")
-
-        current_hour = payload.timestamp.hour
-        same_hour = [item for item in similar if item.created_at.hour == current_hour]
-        if same_hour:
-            score += 6
-            reasons.append("Horario atual possui amostra comparavel registrada.")
-
-        score += 4 if float(snapshot["volatility_pct"]) <= 2.4 else -4
-        return max(0.0, min(round(score, 2), 100.0)), reasons
-
     def _indicator_snapshot_from_payload(self, payload: SnapshotInput) -> dict[str, float | str | bool]:
         candles = self.market_data._generate_demo_series(payload.symbol, payload.market, payload.timeframe, 100)
         candles[-1] = Candle(
@@ -443,7 +248,7 @@ class AnalysisEngine:
 
     def _build_news_context(self, symbol: str) -> str:
         events = self.db.scalars(
-            select(EconomicEvent).where(EconomicEvent.event_time >= datetime.now(UTC) - timedelta(hours=1))
+            select(EconomicEvent).where(EconomicEvent.event_time >= utc_now() - timedelta(hours=1))
         ).all()
         news = self.db.scalars(
             select(MarketNews).where(MarketNews.asset_scope.in_([symbol, "GLOBAL"])).order_by(MarketNews.published_at.desc())
@@ -456,24 +261,6 @@ class AnalysisEngine:
         base_context = latest_asset.context_news if latest_asset else "Sem manchete critica imediata."
         return f"{base_context} {event_titles} {news_titles}".strip()
 
-    @staticmethod
-    def _decision_from_score(score: float, trend: str) -> str:
-        if score <= 50:
-            return "NAO_OPERAR"
-        if trend.lower() in {"alta", "bullish"}:
-            return "COMPRA"
-        if trend.lower() in {"baixa", "bearish"}:
-            return "VENDA"
-        return "NAO_OPERAR"
-
-    @staticmethod
-    def _risk_level(score: float, volatility: float, spread: float) -> str:
-        if score >= 76 and volatility <= 2.4 and spread <= 1.2:
-            return "Baixo"
-        if score >= 60 and volatility <= 3.0 and spread <= 2.0:
-            return "Moderado"
-        return "Alto"
-
 
 def summarize_reasons(records: Sequence[MarketSnapshot]) -> list[str]:
     if not records:
@@ -483,7 +270,7 @@ def summarize_reasons(records: Sequence[MarketSnapshot]) -> list[str]:
 
 
 def seed_demo_dataset(db: Session) -> None:
-    base_time = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    base_time = utc_now().replace(minute=0, second=0, microsecond=0)
     if not db.scalars(select(MarketSnapshot)).first():
         for sample in [
             {

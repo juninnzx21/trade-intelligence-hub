@@ -28,6 +28,16 @@ services:
       - postgres
       - redis
 
+  worker:
+    build:
+      context: ./backend
+    command: ["python", "worker.py"]
+    env_file:
+      - .env.example
+    depends_on:
+      - postgres
+      - redis
+
   frontend:
     build:
       context: ./frontend

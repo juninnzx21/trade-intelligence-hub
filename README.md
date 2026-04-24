@@ -13,12 +13,13 @@ Plataforma profissional de analise inteligente para trade com foco em decisao re
 ## Modulos principais
 
 - Dashboard SaaS com live board, score, risco, horarios operacionais e historico
-- Motor de analise com score tecnico, fundamentalista e historico
+- Motor de analise com engines separados: tecnico, fundamentalista, historico, validacao, timing e scoring
 - Regras de bloqueio que priorizam `NAO_OPERAR`
 - API para analise de oportunidade e simulacao de snapshots
 - Persistencia de candles, indicadores, sinais, resultados e logs
 - Integracao publica com Binance e estrutura pronta para OANDA demo
-- Base de backtest, forward test e painel administrativo
+- Base de backtest, forward test, painel administrativo e streaming live via WebSocket
+- Worker continuo com Redis para coleta de mercado, macro e atualizacao de relatorios
 
 ## Decisoes do motor
 
@@ -63,6 +64,7 @@ Servicos:
 - Frontend: `http://localhost:5173`
 - Backend: `http://localhost:8000`
 - Docs da API: `http://localhost:8000/docs`
+- WebSocket live board: `ws://localhost:8000/api/v1/market/live-board/ws`
 
 ## Variaveis de ambiente
 
@@ -74,10 +76,35 @@ Credenciais opcionais para preparacao oficial:
 - `OANDA_ACCOUNT_ID`
 - `OANDA_BASE_URL`
 
+Credenciais estruturais:
+
+- `DATABASE_URL`
+- `REDIS_URL`
+- `SECRET_KEY`
+- `API_ADMIN_TOKEN`
+- `API_ANALYST_TOKEN`
+
+## Arquitetura profissional adicionada
+
+- `backend/app/services/engines/`
+- `backend/app/services/backtest.py`
+- `backend/app/services/forward_test.py`
+- `backend/app/services/live_feed.py`
+- `backend/app/workers/collector.py`
+- `backend/app/workers/macro.py`
+- `backend/app/db/migrations/001_market_decision_ai.sql`
+
+## Endpoints novos
+
+- `GET /api/v1/health/detailed`
+- `POST /api/v1/backtest/run`
+- `POST /api/v1/forward-test/evaluate`
+- `WS /api/v1/market/live-board/ws`
+
 ## Proximos passos recomendados
 
-1. Conectar fontes oficiais como Binance, OANDA, Finnhub ou Twelve Data.
-2. Adicionar workers para ingestao continua e scraping publico permitido.
-3. Implementar backtest de 3 anos por ativo/timeframe.
-4. Validar 30 dias de forward test com no minimo 500 sinais.
-5. Incluir autenticacao, RBAC e criptografia de chaves API.
+1. Conectar mais fontes oficiais como Finnhub ou Twelve Data.
+2. Trocar o scraper sintetico por conectores publicos reais de calendario e noticias.
+3. Adicionar autenticacao, RBAC completo e 2FA real.
+4. Expandir o replay para 3 anos de historico por ativo/timeframe.
+5. Incluir ML adaptativo somente depois da validacao estatistica.

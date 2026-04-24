@@ -14,6 +14,7 @@ const currentTime = ref(new Date());
 
 let liveRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let clockTimer: ReturnType<typeof setInterval> | null = null;
+let liveSocket: WebSocket | null = null;
 
 const summary = computed(() => dashboard.value?.summary ?? null);
 const signals = computed(() => dashboard.value?.signals ?? []);
@@ -75,11 +76,40 @@ async function refreshLiveBoard() {
   }
 }
 
+function applyLiveBoard(board: LiveAssetBoardItem[]) {
+  if (dashboard.value) {
+    dashboard.value = { ...dashboard.value, live_board: board };
+  }
+}
+
 function startLivePolling() {
   if (liveRefreshTimer) clearInterval(liveRefreshTimer);
   liveRefreshTimer = setInterval(() => {
     void refreshLiveBoard();
   }, 30000);
+}
+
+function connectLiveSocket() {
+  if (typeof window === "undefined") return;
+  if (liveSocket) liveSocket.close();
+  liveSocket = new WebSocket(api.liveBoardSocketUrl());
+  liveSocket.onmessage = (event) => {
+    try {
+      const payload = JSON.parse(event.data) as LiveAssetBoardItem[] | { heartbeat?: boolean };
+      if (Array.isArray(payload)) {
+        applyLiveBoard(payload);
+        autoRefreshLabel.value = "WebSocket live conectado";
+      }
+    } catch {
+      autoRefreshLabel.value = "WebSocket instavel, fallback ativo";
+    }
+  };
+  liveSocket.onerror = () => {
+    autoRefreshLabel.value = "WebSocket instavel, fallback ativo";
+  };
+  liveSocket.onclose = () => {
+    autoRefreshLabel.value = "Auto-refresh ativo a cada 30s";
+  };
 }
 
 function startClock() {
@@ -100,6 +130,7 @@ async function exportCsv() {
 
 onMounted(async () => {
   await loadDashboard();
+  connectLiveSocket();
   startLivePolling();
   startClock();
 });
@@ -107,8 +138,10 @@ onMounted(async () => {
 onUnmounted(() => {
   if (liveRefreshTimer) clearInterval(liveRefreshTimer);
   if (clockTimer) clearInterval(clockTimer);
+  if (liveSocket) liveSocket.close();
   liveRefreshTimer = null;
   clockTimer = null;
+  liveSocket = null;
 });
 
 function decisionClass(decision: string) {
