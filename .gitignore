@@ -16,3 +16,6 @@ frontend/dist/
 postgres-data/
 redis-data/
 *.db
+*.log
+*.err
+backend/app/**/__pycache__/

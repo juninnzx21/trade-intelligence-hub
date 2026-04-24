@@ -52,3 +52,88 @@ class RiskRule(Base):
     name: Mapped[str] = mapped_column(String(60), unique=True)
     threshold: Mapped[float] = mapped_column(Float)
     enabled: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class IntegrationConfig(Base):
+    __tablename__ = "integration_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(60), unique=True)
+    category: Mapped[str] = mapped_column(String(30))
+    status: Mapped[str] = mapped_column(String(20))
+    auth_type: Mapped[str] = mapped_column(String(20))
+    base_url: Mapped[str] = mapped_column(String(255))
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class MonitoredAsset(Base):
+    __tablename__ = "monitored_assets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(20), unique=True, index=True)
+    market: Mapped[str] = mapped_column(String(20), index=True)
+    provider: Mapped[str] = mapped_column(String(40))
+    priority: Mapped[int] = mapped_column(Integer, default=1)
+    enabled: Mapped[int] = mapped_column(Integer, default=1)
+    timeframes: Mapped[str] = mapped_column(String(80), default="1m,5m,15m,1h")
+
+
+class SystemModule(Base):
+    __tablename__ = "system_modules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(60), unique=True)
+    mode: Mapped[str] = mapped_column(String(20))
+    enabled: Mapped[int] = mapped_column(Integer, default=1)
+    description: Mapped[str] = mapped_column(Text, default="")
+
+
+class RiskProfile(Base):
+    __tablename__ = "risk_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    profile_name: Mapped[str] = mapped_column(String(60), unique=True)
+    stake_percent: Mapped[float] = mapped_column(Float, default=1.0)
+    daily_stop_percent: Mapped[float] = mapped_column(Float, default=3.0)
+    daily_target_percent: Mapped[float] = mapped_column(Float, default=2.0)
+    max_consecutive_losses: Mapped[int] = mapped_column(Integer, default=3)
+    cooldown_minutes: Mapped[int] = mapped_column(Integer, default=30)
+    observer_mode: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class BacktestMetric(Base):
+    __tablename__ = "backtest_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    strategy_name: Mapped[str] = mapped_column(String(60))
+    symbol: Mapped[str] = mapped_column(String(20), index=True)
+    timeframe: Mapped[str] = mapped_column(String(10), index=True)
+    win_rate: Mapped[float] = mapped_column(Float)
+    payoff: Mapped[float] = mapped_column(Float)
+    drawdown: Mapped[float] = mapped_column(Float)
+    net_profit: Mapped[float] = mapped_column(Float)
+    worst_streak: Mapped[int] = mapped_column(Integer)
+    best_hour: Mapped[str] = mapped_column(String(20))
+    risk_label: Mapped[str] = mapped_column(String(20))
+
+
+class ForwardTestMetric(Base):
+    __tablename__ = "forward_test_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    window_name: Mapped[str] = mapped_column(String(60), unique=True)
+    signals_count: Mapped[int] = mapped_column(Integer)
+    win_rate: Mapped[float] = mapped_column(Float)
+    average_score: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(20))
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    actor: Mapped[str] = mapped_column(String(60))
+    action: Mapped[str] = mapped_column(String(120))
+    details: Mapped[str] = mapped_column(Text, default="")

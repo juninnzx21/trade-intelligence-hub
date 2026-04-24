@@ -1,4 +1,4 @@
-import type { DashboardSummary, EconomicEventItem, OpportunityCard, SignalItem } from "./types";
+import type { DashboardPayload, LiveAssetBoardItem } from "./types";
 
 const API_BASE = "http://localhost:8000/api/v1";
 
@@ -11,8 +11,13 @@ async function request<T>(path: string): Promise<T> {
 }
 
 export const api = {
-  getSummary: () => request<DashboardSummary>("/dashboard/summary"),
-  getSignals: () => request<SignalItem[]>("/signals"),
-  getOpportunities: () => request<OpportunityCard[]>("/opportunities"),
-  getEconomicEvents: () => request<EconomicEventItem[]>("/economic-events")
+  getDashboard: () => request<DashboardPayload>("/dashboard"),
+  getLiveBoard: () => request<LiveAssetBoardItem[]>("/market/live-board"),
+  refreshLiveBoard: async () => {
+    const response = await fetch(`${API_BASE}/market/live-board/refresh`, { method: "POST" });
+    if (!response.ok) {
+      throw new Error("Falha ao atualizar a varredura ao vivo");
+    }
+    return response.json() as Promise<LiveAssetBoardItem[]>;
+  }
 };
