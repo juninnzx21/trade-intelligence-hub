@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -34,6 +35,7 @@ from app.services.market_data import Candle, MarketDataService, calculate_indica
 
 
 TIMEFRAME_TO_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}
+BRAZIL_TZ = ZoneInfo("America/Sao_Paulo")
 
 
 class AnalysisEngine:
@@ -228,8 +230,8 @@ class AnalysisEngine:
 
     def _signal_timing(self, payload: SnapshotInput) -> tuple[datetime, datetime, int, str, datetime]:
         minutes = TIMEFRAME_TO_MINUTES.get(payload.timeframe, 5)
-        candle_open = payload.timestamp.astimezone(UTC).replace(second=0, microsecond=0)
-        now = datetime.now(UTC).replace(second=0, microsecond=0)
+        candle_open = payload.timestamp.astimezone(BRAZIL_TZ).replace(second=0, microsecond=0)
+        now = datetime.now(BRAZIL_TZ).replace(second=0, microsecond=0)
         entry_time = candle_open + timedelta(minutes=minutes)
         advanced_limit = candle_open + timedelta(minutes=max(1, int(minutes * 0.6)))
         if now > advanced_limit:
@@ -239,9 +241,9 @@ class AnalysisEngine:
         exit_time = entry_time + timedelta(minutes=minutes)
         valid_until = entry_time + timedelta(minutes=1 if minutes <= 5 else 2 if minutes == 15 else 5)
         duration_reason = (
-            "Duracao alinhada ao timeframe e ao fechamento do proximo ciclo valido."
+            "Duracao alinhada ao timeframe e ao fechamento do proximo candle valido em horario de Brasilia."
             if minutes < 60
-            else "Duracao mais longa porque a leitura usa estrutura de 1 hora."
+            else "Duracao mais longa porque a leitura usa estrutura de 1 hora em horario de Brasilia."
         )
         return entry_time, exit_time, minutes, duration_reason, valid_until
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { api } from "./api";
 import type { DashboardPayload, LiveAssetBoardItem, SignalItem } from "./types";
 
@@ -9,6 +9,8 @@ const refreshingLive = ref(false);
 const exportMessage = ref("");
 const dashboard = ref<DashboardPayload | null>(null);
 const selectedMarket = ref("TODOS");
+const autoRefreshLabel = ref("Auto-refresh ativo a cada 30s");
+let liveRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 const summary = computed(() => dashboard.value?.summary ?? null);
 const signals = computed(() => dashboard.value?.signals ?? []);
@@ -47,6 +49,7 @@ async function loadDashboard() {
 }
 
 async function refreshLiveBoard() {
+  if (refreshingLive.value) return;
   refreshingLive.value = true;
   error.value = "";
   try {
@@ -63,6 +66,13 @@ async function refreshLiveBoard() {
   }
 }
 
+function startLivePolling() {
+  if (liveRefreshTimer) clearInterval(liveRefreshTimer);
+  liveRefreshTimer = setInterval(() => {
+    void refreshLiveBoard();
+  }, 30000);
+}
+
 async function exportCsv() {
   try {
     const csv = await api.exportCsv();
@@ -72,7 +82,17 @@ async function exportCsv() {
   }
 }
 
-onMounted(loadDashboard);
+onMounted(async () => {
+  await loadDashboard();
+  startLivePolling();
+});
+
+onUnmounted(() => {
+  if (liveRefreshTimer) {
+    clearInterval(liveRefreshTimer);
+    liveRefreshTimer = null;
+  }
+});
 
 function decisionClass(decision: string) {
   return {
@@ -131,7 +151,8 @@ function compactDate(value: string | null | undefined) {
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
+    timeZone: "America/Sao_Paulo"
   });
 }
 
@@ -218,9 +239,10 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
                 {{ headline?.symbol ?? "Aguardando" }} • score {{ headline?.score ?? 0 }} • risco {{ headline?.risk_level ?? "Alto" }}
               </p>
               <div class="chip-row">
-                <span class="ghost-chip">Entrada: {{ compactDate(headline?.entry_time) }}</span>
-                <span class="ghost-chip">Saida: {{ compactDate(headline?.exit_time) }}</span>
-                <span class="ghost-chip">Valido ate: {{ compactDate(headline?.signal_valid_until) }}</span>
+                <span class="ghost-chip">Entrada (Brasilia): {{ compactDate(headline?.entry_time) }}</span>
+                <span class="ghost-chip">Saida (Brasilia): {{ compactDate(headline?.exit_time) }}</span>
+                <span class="ghost-chip">Valido ate (Brasilia): {{ compactDate(headline?.signal_valid_until) }}</span>
+                <span class="ghost-chip">{{ autoRefreshLabel }}</span>
               </div>
             </div>
             <div class="score-ring">
@@ -340,6 +362,7 @@ const backtestSeries = computed(() => tinySeries(backtests.value.map((item) => i
                 <p v-if="item.block_reasons.length" class="blockers">Bloqueios: {{ item.block_reasons.join(" • ") }}</p>
               </article>
             </div>
+            <p class="panel-note">Horarios exibidos em America/Sao_Paulo. A varredura ao vivo atualiza automaticamente a cada 30 segundos.</p>
           </article>
 
           <article id="macro" class="panel">
@@ -633,18 +656,18 @@ h1, h2, h3, h4, p { margin: 0; }
 .score-ring { width: 116px; height: 116px; border-radius: 50%; border: 10px solid rgba(70,208,213,0.24); display: grid; place-items: center; font-size: 1.95rem; font-weight: 700; }
 .command-strip, .panel-grid { display: grid; grid-template-columns: 1.35fr 1fr; gap: 18px; }
 .panel.wide { min-width: 0; }
-.quality-strip, .policy-grid, .indicator-grid, .stats-grid, .admin-grid, .live-grid, .stack, .event-list { display: grid; gap: 14px; }
+.policy-grid, .indicator-grid, .stats-grid, .admin-grid, .live-grid, .stack, .event-list { display: grid; gap: 14px; }
 .policy-grid { margin-top: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .chart-shell { margin-top: 16px; height: 110px; border-radius: 18px; border: 1px solid rgba(255,255,255,0.05); background: rgba(255,255,255,0.03); padding: 10px; color: var(--cyan); }
 .chart-shell.compact { height: 82px; }
 .chart-shell svg { width: 100%; height: 100%; }
 .live-grid { margin-top: 18px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.quality-card, .opportunity-card, .event-item, .admin-card { padding: 16px; border-radius: 18px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); }
+.opportunity-card, .event-item, .admin-card { padding: 16px; border-radius: 18px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); }
 .stats-grid, .indicator-grid { margin-top: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); color: var(--muted); font-size: 0.9rem; }
 .opportunity-card ul { margin: 14px 0 0; padding-left: 18px; color: var(--muted); }
 .blockers { margin-top: 12px; color: var(--amber); font-size: 0.92rem; }
-.score-bar, .mini-rail { height: 10px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,0.06); margin-top: 14px; }
-.fill, .mini-fill { height: 100%; background: linear-gradient(90deg, var(--cyan), var(--lime)); }
+.score-bar { height: 10px; border-radius: 999px; overflow: hidden; background: rgba(255,255,255,0.06); margin-top: 14px; }
+.fill { height: 100%; background: linear-gradient(90deg, var(--cyan), var(--lime)); }
 .table-shell { overflow: auto; margin-top: 18px; }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 12px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
@@ -659,9 +682,10 @@ th, td { padding: 12px 8px; border-bottom: 1px solid var(--line); text-align: le
 .primary-button:disabled { opacity: 0.65; cursor: wait; }
 .state-card { padding: 28px; }
 .state-card.error { border-color: rgba(255,127,146,0.35); color: var(--rose); }
-.eyebrow, .muted, .hero-subtitle, .event-item p, .event-item small, .admin-card p, .admin-card small, .export-note { color: var(--muted); }
+.eyebrow, .muted, .hero-subtitle, .event-item p, .event-item small, .admin-card p, .admin-card small, .export-note, .panel-note { color: var(--muted); }
 .admin-grid { margin-top: 18px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .admin-section { display: grid; gap: 12px; }
+.panel-note { margin-top: 16px; font-size: 0.92rem; }
 @media (max-width: 1240px) {
   .shell, .hero-grid, .command-strip, .panel-grid, .admin-grid, .live-grid { grid-template-columns: 1fr; }
   .hero-card { grid-column: span 1; }
