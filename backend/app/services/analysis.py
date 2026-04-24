@@ -5,23 +5,35 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    ApiConnection,
+    Asset,
     AuditLog,
     AlertChannel,
     BacktestMetric,
+    CandleRecord,
+    DecisionSignal,
     EconomicEvent,
     ForwardTestMetric,
+    IndicatorRecord,
     IntegrationConfig,
+    MarketNews,
     MarketSnapshot,
     MonitoredAsset,
     RiskProfile,
     RiskRule,
     ScrapingSource,
     SecurityControl,
+    SignalResult,
+    StrategyRule,
+    SystemLog,
     SystemModule,
     UserAccount,
 )
 from app.schemas.analysis import AnalysisResponse, SnapshotInput
 from app.services.market_data import Candle, MarketDataService, calculate_indicator_snapshot
+
+
+TIMEFRAME_TO_MINUTES = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}
 
 
 class AnalysisEngine:
@@ -38,25 +50,47 @@ class AnalysisEngine:
 
         final_score = round((technical_score * 0.45) + (fundamental_score * 0.25) + (historical_score * 0.30), 2)
         reasons = technical_reasons + fundamental_reasons + historical_reasons
+        entry_time, exit_time, duration_minutes, duration_reason, valid_until = self._signal_timing(payload)
 
         if blockers:
             final_score = min(final_score, 50)
             decision = "NAO_OPERAR"
             risk_level = "Alto"
+            entry_time = None
+            exit_time = None
+            duration_minutes = None
+            duration_reason = None
+            valid_until = None
         else:
             decision = self._decision_from_score(final_score, payload.trend)
             risk_level = self._risk_level(final_score, payload.volatility, payload.spread)
+            if decision == "NAO_OPERAR":
+                entry_time = None
+                exit_time = None
+                duration_minutes = None
+                duration_reason = None
+                valid_until = None
 
         return AnalysisResponse(
             symbol=payload.symbol,
+            timeframe=payload.timeframe,
             decision=decision,
             score=final_score,
             technical_score=technical_score,
             fundamental_score=fundamental_score,
             historical_score=historical_score,
             risk_level=risk_level,
-            blockers=blockers,
+            entry_time=entry_time,
+            exit_time=exit_time,
+            duration=f"{duration_minutes} minutos" if duration_minutes and duration_minutes < 60 else ("1 hora" if duration_minutes == 60 else None),
+            duration_minutes=duration_minutes,
+            duration_reason=duration_reason,
+            signal_valid_until=valid_until,
+            technical_reasons=technical_reasons[:5],
+            fundamental_reasons=(fundamental_reasons + historical_reasons)[:5],
+            block_reasons=blockers,
             reasons=reasons[:6],
+            warning="Sinal apenas para analise. Nao executa ordens reais.",
             indicator_snapshot=snapshot,
         )
 
@@ -81,9 +115,55 @@ class AnalysisEngine:
             final_score=analysis.score,
             decision=analysis.decision,
             risk_level=analysis.risk_level,
-            reasoning=" | ".join(analysis.reasons + analysis.blockers),
+            reasoning=" | ".join(analysis.reasons + analysis.block_reasons),
         )
         self.db.add(snapshot)
+        self.db.add(
+            CandleRecord(
+                asset=payload.symbol,
+                timeframe=payload.timeframe,
+                source=payload.market,
+                timestamp=payload.timestamp,
+                open=payload.open,
+                high=payload.high,
+                low=payload.low,
+                close=payload.close,
+                spread=payload.spread,
+                volume=payload.volume,
+            )
+        )
+        self.db.add(
+            IndicatorRecord(
+                asset=payload.symbol,
+                timeframe=payload.timeframe,
+                timestamp=payload.timestamp,
+                trend=payload.trend,
+                rsi=float(analysis.indicator_snapshot["rsi"]),
+                macd=float(analysis.indicator_snapshot["macd"]),
+                atr=float(analysis.indicator_snapshot["atr"]),
+                vwap=float(analysis.indicator_snapshot["vwap"]),
+                volatility=float(analysis.indicator_snapshot["volatility_pct"]),
+                summary=" | ".join(analysis.technical_reasons[:3]),
+            )
+        )
+        signal = DecisionSignal(
+            asset=payload.symbol,
+            market=payload.market,
+            timeframe=payload.timeframe,
+            decision=analysis.decision,
+            score=analysis.score,
+            risk=analysis.risk_level,
+            entry_time=analysis.entry_time,
+            exit_time=analysis.exit_time,
+            signal_valid_until=analysis.signal_valid_until,
+            duration_minutes=analysis.duration_minutes,
+            technical_reasons=" | ".join(analysis.technical_reasons),
+            fundamental_reasons=" | ".join(analysis.fundamental_reasons),
+            block_reasons=" | ".join(analysis.block_reasons),
+            warning=analysis.warning,
+            created_at=payload.timestamp,
+        )
+        self.db.add(signal)
         self.db.add(
             AuditLog(
                 created_at=datetime.now(UTC),
@@ -92,8 +172,33 @@ class AnalysisEngine:
                 details=f"{payload.symbol} {payload.timeframe} score={analysis.score}",
             )
         )
+        self.db.add(
+            SystemLog(
+                created_at=datetime.now(UTC),
+                level="INFO",
+                module="analysis_engine",
+                message=f"{payload.symbol} {payload.timeframe} -> {analysis.decision} score={analysis.score}",
+            )
+        )
         self.db.commit()
         self.db.refresh(snapshot)
+        persisted_signal = self.db.scalars(
+            select(DecisionSignal)
+            .where(DecisionSignal.asset == payload.symbol, DecisionSignal.timeframe == payload.timeframe)
+            .order_by(DecisionSignal.id.desc())
+        ).first()
+        if persisted_signal:
+            self.db.add(
+                SignalResult(
+                    signal_id=persisted_signal.id,
+                    status="open" if analysis.decision != "NAO_OPERAR" else "blocked",
+                    evaluated_at=None,
+                    outcome_label="PENDING",
+                    pnl_units=0.0,
+                    notes="Forward test observer mode.",
+                )
+            )
+            self.db.commit()
         return snapshot
 
     def analyze_live_asset(self, symbol: str, market: str, timeframe: str, persist: bool = False) -> AnalysisResponse:
@@ -121,6 +226,25 @@ class AnalysisEngine:
             self.save_analysis(payload, analysis)
         return analysis
 
+    def _signal_timing(self, payload: SnapshotInput) -> tuple[datetime, datetime, int, str, datetime]:
+        minutes = TIMEFRAME_TO_MINUTES.get(payload.timeframe, 5)
+        candle_open = payload.timestamp.astimezone(UTC).replace(second=0, microsecond=0)
+        now = datetime.now(UTC).replace(second=0, microsecond=0)
+        entry_time = candle_open + timedelta(minutes=minutes)
+        advanced_limit = candle_open + timedelta(minutes=max(1, int(minutes * 0.6)))
+        if now > advanced_limit:
+            entry_time = candle_open + timedelta(minutes=minutes)
+        if entry_time <= now:
+            entry_time = entry_time + timedelta(minutes=minutes)
+        exit_time = entry_time + timedelta(minutes=minutes)
+        valid_until = entry_time + timedelta(minutes=1 if minutes <= 5 else 2 if minutes == 15 else 5)
+        duration_reason = (
+            "Duracao alinhada ao timeframe e ao fechamento do proximo ciclo valido."
+            if minutes < 60
+            else "Duracao mais longa porque a leitura usa estrutura de 1 hora."
+        )
+        return entry_time, exit_time, minutes, duration_reason, valid_until
+
     def _evaluate_blockers(self, payload: SnapshotInput, snapshot: dict[str, float | str | bool]) -> list[str]:
         blockers: list[str] = []
         if payload.spread > 2.5:
@@ -136,7 +260,7 @@ class AnalysisEngine:
         if payload.trend.lower() == "lateral" and payload.volatility < 0.5:
             blockers.append("Mercado em lateralizacao extrema.")
         if bool(snapshot["lateral"]):
-            blockers.append("Estrutura lateral extrema em medias e VWAP.")
+            blockers.append("Mercado sem direcao clara.")
         recent = self.db.scalars(
             select(MarketSnapshot).where(MarketSnapshot.symbol == payload.symbol).order_by(MarketSnapshot.created_at.desc())
         ).all()[:6]
@@ -147,7 +271,7 @@ class AnalysisEngine:
             else:
                 break
         if negative_streak >= 3:
-            blockers.append("Sequencia negativa excessiva para o ativo.")
+            blockers.append("Sequencia ruim recente para o ativo.")
         return blockers
 
     def _technical_score(self, payload: SnapshotInput, snapshot: dict[str, float | str | bool]) -> tuple[float, list[str]]:
@@ -260,7 +384,7 @@ class AnalysisEngine:
             reasons.append("Agenda economica carregada com evento de alto impacto.")
         else:
             score += 10
-            reasons.append("Sem evento macro critico no curto prazo.")
+            reasons.append("Sem noticia forte proxima.")
 
         context = payload.context_news.lower()
         positive_terms = ("desinflacao", "liquidez", "corte de juros", "risk-on")
@@ -289,15 +413,10 @@ class AnalysisEngine:
             reasons.append("Base historica inicial ainda curta para esse contexto.")
             return score, reasons
 
-        successful = [
-            item for item in similar
-            if item.future_result.upper() in {"WIN", "TARGET", "POSITIVE"}
-        ]
+        successful = [item for item in similar if item.future_result.upper() in {"WIN", "TARGET", "POSITIVE"}]
         success_rate = len(successful) / len(similar)
         score += success_rate * 30
-        reasons.append(
-            f"Historico semelhante indica taxa positiva de {round(success_rate * 100, 1)}%."
-        )
+        reasons.append(f"Historico semelhante indica taxa positiva de {round(success_rate * 100, 1)}%.")
 
         current_hour = payload.timestamp.hour
         same_hour = [item for item in similar if item.created_at.hour == current_hour]
@@ -306,7 +425,6 @@ class AnalysisEngine:
             reasons.append("Horario atual possui amostra comparavel registrada.")
 
         score += 4 if float(snapshot["volatility_pct"]) <= 2.4 else -4
-
         return max(0.0, min(round(score, 2), 100.0)), reasons
 
     def _indicator_snapshot_from_payload(self, payload: SnapshotInput) -> dict[str, float | str | bool]:
@@ -325,12 +443,16 @@ class AnalysisEngine:
         events = self.db.scalars(
             select(EconomicEvent).where(EconomicEvent.event_time >= datetime.now(UTC) - timedelta(hours=1))
         ).all()
+        news = self.db.scalars(
+            select(MarketNews).where(MarketNews.asset_scope.in_([symbol, "GLOBAL"])).order_by(MarketNews.published_at.desc())
+        ).all()
         latest_asset = self.db.scalars(
             select(MarketSnapshot).where(MarketSnapshot.symbol == symbol).order_by(MarketSnapshot.created_at.desc())
         ).first()
         event_titles = ", ".join(event.title for event in events[:2])
+        news_titles = ", ".join(item.title for item in news[:2])
         base_context = latest_asset.context_news if latest_asset else "Sem manchete critica imediata."
-        return f"{base_context} {event_titles}".strip()
+        return f"{base_context} {event_titles} {news_titles}".strip()
 
     @staticmethod
     def _decision_from_score(score: float, trend: str) -> str:
@@ -361,7 +483,7 @@ def summarize_reasons(records: Sequence[MarketSnapshot]) -> list[str]:
 def seed_demo_dataset(db: Session) -> None:
     base_time = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     if not db.scalars(select(MarketSnapshot)).first():
-        samples = [
+        for sample in [
             {
                 "created_at": base_time - timedelta(minutes=15),
                 "symbol": "EUR/USD",
@@ -431,12 +553,11 @@ def seed_demo_dataset(db: Session) -> None:
                 "reasoning": "Tendencia primaria de baixa confirmada. | Pressao vendedora consistente no candle. | Historico semelhante positivo.",
                 "future_result": "WIN",
             },
-        ]
-        for sample in samples:
+        ]:
             db.add(MarketSnapshot(**sample))
 
     if not db.scalars(select(EconomicEvent)).first():
-        events = [
+        for event in [
             EconomicEvent(
                 event_time=base_time + timedelta(hours=1),
                 region="US",
@@ -453,9 +574,30 @@ def seed_demo_dataset(db: Session) -> None:
                 source="Noticias Financeiras Publicas",
                 summary="Declaracoes monitoradas para impacto em EUR crosses.",
             ),
-        ]
-        for event in events:
+        ]:
             db.add(event)
+
+    if not db.scalars(select(MarketNews)).first():
+        for item in [
+            MarketNews(
+                published_at=base_time - timedelta(minutes=20),
+                title="Dolar opera estavel antes do payroll",
+                impact="MEDIO",
+                asset_scope="GLOBAL",
+                source="Noticias Financeiras Publicas",
+                summary="Fluxo defensivo moderado antes de dado macro importante.",
+            ),
+            MarketNews(
+                published_at=base_time - timedelta(minutes=12),
+                title="Bitcoin absorve realizacao e mantem estrutura de alta",
+                impact="MEDIO",
+                asset_scope="BTC/USDT",
+                source="Noticias Financeiras Publicas",
+                summary="Mercado cripto mantem apetite a risco sem evento extremo imediato.",
+            ),
+        ]:
+            db.add(item)
+
     if not db.scalars(select(RiskRule)).first():
         for rule in [
             RiskRule(name="max_spread", threshold=2.5, enabled=1),
@@ -463,6 +605,7 @@ def seed_demo_dataset(db: Session) -> None:
             RiskRule(name="max_negative_streak", threshold=3, enabled=1),
         ]:
             db.add(rule)
+
     if not db.scalars(select(IntegrationConfig)).first():
         for integration in [
             IntegrationConfig(
@@ -491,6 +634,14 @@ def seed_demo_dataset(db: Session) -> None:
             ),
         ]:
             db.add(integration)
+
+    if not db.scalars(select(ApiConnection)).first():
+        for connection in [
+            ApiConnection(name="oanda-demo", provider="OANDA", mode="demo", status="ready-for-env", base_url="https://api-fxpractice.oanda.com", notes="Conta demo v20."),
+            ApiConnection(name="binance-public", provider="Binance", mode="public", status="active", base_url="https://api.binance.com", notes="Klines, ticker e book ticker publicos."),
+        ]:
+            db.add(connection)
+
     if not db.scalars(select(MonitoredAsset)).first():
         for asset in [
             MonitoredAsset(symbol="EUR/USD", market="FOREX", provider="OANDA-ready", priority=1, enabled=1, timeframes="1m,5m,15m,1h"),
@@ -499,6 +650,16 @@ def seed_demo_dataset(db: Session) -> None:
             MonitoredAsset(symbol="ETH/USDT", market="CRYPTO", provider="Binance", priority=2, enabled=1, timeframes="5m,15m,1h"),
         ]:
             db.add(asset)
+
+    if not db.scalars(select(Asset)).first():
+        for asset in [
+            Asset(symbol="EUR/USD", market="FOREX", source="OANDA", enabled=1),
+            Asset(symbol="GBP/USD", market="FOREX", source="OANDA", enabled=1),
+            Asset(symbol="BTC/USDT", market="CRYPTO", source="Binance", enabled=1),
+            Asset(symbol="ETH/USDT", market="CRYPTO", source="Binance", enabled=1),
+        ]:
+            db.add(asset)
+
     if not db.scalars(select(SystemModule)).first():
         for module in [
             SystemModule(name="Data Collector", mode="observer", enabled=1, description="Coleta snapshots, contexto e eventos."),
@@ -509,6 +670,7 @@ def seed_demo_dataset(db: Session) -> None:
             SystemModule(name="Execution Bridge", mode="disabled", enabled=0, description="Mantido desligado ate validacao estatistica futura."),
         ]:
             db.add(module)
+
     if not db.scalars(select(RiskProfile)).first():
         db.add(
             RiskProfile(
@@ -521,6 +683,7 @@ def seed_demo_dataset(db: Session) -> None:
                 observer_mode=1,
             )
         )
+
     if not db.scalars(select(BacktestMetric)).first():
         for metric in [
             BacktestMetric(
@@ -549,6 +712,7 @@ def seed_demo_dataset(db: Session) -> None:
             ),
         ]:
             db.add(metric)
+
     if not db.scalars(select(ForwardTestMetric)).first():
         for metric in [
             ForwardTestMetric(
@@ -569,12 +733,22 @@ def seed_demo_dataset(db: Session) -> None:
             ),
         ]:
             db.add(metric)
+
+    if not db.scalars(select(StrategyRule)).first():
+        for rule in [
+            StrategyRule(name="trend_pullback", category="technical", enabled=1, config_summary="Trend + pullback + volume + sem noticia forte."),
+            StrategyRule(name="breakout_vwap", category="technical", enabled=1, config_summary="Rompimento com VWAP e momentum controlado."),
+            StrategyRule(name="macro_blocker", category="fundamental", enabled=1, config_summary="Bloqueia entrada perto de evento de alto impacto."),
+        ]:
+            db.add(rule)
+
     if not db.scalars(select(AuditLog)).first():
         for audit in [
             AuditLog(created_at=base_time - timedelta(minutes=42), actor="system", action="seed:dataset", details="Carga inicial do observador."),
             AuditLog(created_at=base_time - timedelta(minutes=19), actor="system", action="backtest:refresh", details="Metricas recalculadas por estrategia."),
         ]:
             db.add(audit)
+
     if not db.scalars(select(UserAccount)).first():
         for user in [
             UserAccount(name="Admin Operator", email="admin@tradehub.local", role="admin", status="active", two_factor_enabled=1),
@@ -582,6 +756,7 @@ def seed_demo_dataset(db: Session) -> None:
             UserAccount(name="Observer Seat", email="observer@tradehub.local", role="viewer", status="pilot", two_factor_enabled=0),
         ]:
             db.add(user)
+
     if not db.scalars(select(AlertChannel)).first():
         for channel in [
             AlertChannel(name="Telegram Ops", channel_type="telegram", status="planned", destination="@trade_ops", notes="Pronto para fase de alertas."),
@@ -589,6 +764,7 @@ def seed_demo_dataset(db: Session) -> None:
             AlertChannel(name="Mobile Push", channel_type="push", status="observer", destination="ios/android", notes="Usado para sinais fortes e bloqueios macro."),
         ]:
             db.add(channel)
+
     if not db.scalars(select(SecurityControl)).first():
         for control in [
             SecurityControl(name="API keys encryption", status="designed", severity="high", details="Chaves ficam preparadas para criptografia em repouso."),
@@ -597,6 +773,7 @@ def seed_demo_dataset(db: Session) -> None:
             SecurityControl(name="Backup policy", status="planned", severity="medium", details="Backups diarios em VPS/Linux no roadmap operacional."),
         ]:
             db.add(control)
+
     if not db.scalars(select(ScrapingSource)).first():
         for source in [
             ScrapingSource(name="Economic Calendar", scope="macro", status="observer", policy="Somente pagina publica, sem login, captcha ou bypass."),
@@ -604,4 +781,8 @@ def seed_demo_dataset(db: Session) -> None:
             ScrapingSource(name="Central Bank Statements", scope="macro", status="planned", policy="Captura de comunicados publicos oficiais."),
         ]:
             db.add(source)
+
+    if not db.scalars(select(SystemLog)).first():
+        db.add(SystemLog(created_at=base_time - timedelta(minutes=30), level="INFO", module="bootstrap", message="Sistema iniciado em modo observador."))
+
     db.commit()

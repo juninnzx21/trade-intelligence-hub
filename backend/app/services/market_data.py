@@ -9,6 +9,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.db.models import MarketSnapshot
 
 
@@ -40,8 +41,13 @@ BINANCE_INTERVAL_MAP = {
 class MarketDataService:
     def __init__(self, db: Session):
         self.db = db
+        self.settings = get_settings()
 
     def get_series(self, symbol: str, market: str, timeframe: str, limit: int = 120) -> tuple[list[Candle], str]:
+        if market.upper() == "FOREX":
+            live = self._fetch_oanda_series(symbol, timeframe, limit)
+            if live:
+                return live, "OANDA v20 Demo"
         if market.upper() == "CRYPTO":
             live = self._fetch_binance_series(symbol, timeframe, limit)
             if live:
@@ -68,6 +74,47 @@ class MarketDataService:
             select(MarketSnapshot).where(MarketSnapshot.symbol == symbol).order_by(MarketSnapshot.created_at.desc())
         ).first()
         return latest.spread if latest else 1.0
+
+    def _fetch_oanda_series(self, symbol: str, timeframe: str, limit: int) -> list[Candle]:
+        if not self.settings.oanda_api_key:
+            return []
+        granularity_map = {
+            "1m": "M1",
+            "5m": "M5",
+            "15m": "M15",
+            "1h": "H1",
+        }
+        granularity = granularity_map.get(timeframe)
+        if not granularity:
+            return []
+        instrument = symbol.replace("/", "_")
+        try:
+            response = httpx.get(
+                f"{self.settings.oanda_base_url}/v3/instruments/{instrument}/candles",
+                params={"price": "MBA", "granularity": granularity, "count": limit},
+                headers={"Authorization": f"Bearer {self.settings.oanda_api_key}"},
+                timeout=6.0,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            candles: list[Candle] = []
+            for item in payload.get("candles", []):
+                if not item.get("complete", False):
+                    continue
+                mid = item.get("mid") or {}
+                candles.append(
+                    Candle(
+                        timestamp=datetime.fromisoformat(item["time"].replace("Z", "+00:00")).astimezone(UTC),
+                        open=float(mid.get("o", 0.0)),
+                        high=float(mid.get("h", 0.0)),
+                        low=float(mid.get("l", 0.0)),
+                        close=float(mid.get("c", 0.0)),
+                        volume=float(item.get("volume", 0.0)),
+                    )
+                )
+            return candles
+        except Exception:
+            return []
 
     def _fetch_binance_series(self, symbol: str, timeframe: str, limit: int) -> list[Candle]:
         interval = BINANCE_INTERVAL_MAP.get(timeframe)

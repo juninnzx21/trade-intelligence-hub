@@ -21,14 +21,24 @@ class SnapshotInput(BaseModel):
 
 class AnalysisResponse(BaseModel):
     symbol: str
+    timeframe: str
     decision: str
     score: float
     technical_score: float
     fundamental_score: float
     historical_score: float
     risk_level: str
-    blockers: list[str]
+    entry_time: datetime | None
+    exit_time: datetime | None
+    duration: str | None
+    duration_minutes: int | None
+    duration_reason: str | None
+    signal_valid_until: datetime | None
+    technical_reasons: list[str]
+    fundamental_reasons: list[str]
+    block_reasons: list[str]
     reasons: list[str]
+    warning: str
     indicator_snapshot: dict[str, float | str | bool]
 
 
@@ -73,6 +83,10 @@ class SignalItem(BaseModel):
     decision: str
     score: float
     risk_level: str
+    entry_time: datetime | None = None
+    exit_time: datetime | None = None
+    duration: str | None = None
+    signal_valid_until: datetime | None = None
     trend: str
     reasoning: str
 
@@ -179,11 +193,17 @@ class LiveAssetBoardItem(BaseModel):
     score: float
     decision: str
     risk_level: str
+    entry_time: datetime | None
+    exit_time: datetime | None
+    duration: str | None
+    signal_valid_until: datetime | None
     trend: str
     spread: float
     volatility: float
+    technical_reasons: list[str]
+    fundamental_reasons: list[str]
+    block_reasons: list[str]
     reasons: list[str]
-    blockers: list[str]
     indicator_snapshot: dict[str, float | str | bool]
 
 

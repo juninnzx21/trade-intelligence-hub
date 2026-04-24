@@ -7,6 +7,7 @@ from app.db.models import (
     AuditLog,
     AlertChannel,
     BacktestMetric,
+    DecisionSignal,
     EconomicEvent,
     ForwardTestMetric,
     IntegrationConfig,
@@ -28,6 +29,7 @@ from app.schemas.analysis import (
     EconomicEventItem,
     ForwardTestMetricItem,
     IntegrationStatus,
+    LiveAssetBoardItem,
     ModuleStatus,
     OpportunityCard,
     RiskProfileItem,
@@ -108,12 +110,7 @@ def build_dashboard_payload(db: Session, persist_live_board: bool = False) -> Da
         for item in db.scalars(select(ForwardTestMetric).order_by(ForwardTestMetric.signals_count.desc())).all()
     ]
     audits = [
-        AuditLogItem(
-            created_at=item.created_at,
-            actor=item.actor,
-            action=item.action,
-            details=item.details,
-        )
+        AuditLogItem(created_at=item.created_at, actor=item.actor, action=item.action, details=item.details)
         for item in db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc())).all()[:8]
     ]
     users = [
@@ -146,12 +143,7 @@ def build_dashboard_payload(db: Session, persist_live_board: bool = False) -> Da
         for item in db.scalars(select(SecurityControl).order_by(SecurityControl.name.asc())).all()
     ]
     scraping_sources = [
-        ScrapingSourceItem(
-            name=item.name,
-            scope=item.scope,
-            status=item.status,
-            policy=item.policy,
-        )
+        ScrapingSourceItem(name=item.name, scope=item.scope, status=item.status, policy=item.policy)
         for item in db.scalars(select(ScrapingSource).order_by(ScrapingSource.name.asc())).all()
     ]
     return DashboardPayload(
@@ -218,19 +210,44 @@ def build_opportunities(db: Session) -> list[OpportunityCard]:
 
 
 def build_signals(db: Session) -> list[SignalItem]:
-    records = db.scalars(select(MarketSnapshot).order_by(MarketSnapshot.created_at.desc())).all()
+    records = db.scalars(select(DecisionSignal).order_by(DecisionSignal.created_at.desc())).all()
+    if not records:
+        fallback = db.scalars(select(MarketSnapshot).order_by(MarketSnapshot.created_at.desc())).all()
+        return [
+            SignalItem(
+                id=item.id,
+                timestamp=item.created_at,
+                symbol=item.symbol,
+                market=item.market,
+                timeframe=item.timeframe,
+                decision=item.decision,
+                score=item.final_score,
+                risk_level=item.risk_level,
+                entry_time=None,
+                exit_time=None,
+                duration=None,
+                signal_valid_until=None,
+                trend=item.trend,
+                reasoning=item.reasoning,
+            )
+            for item in fallback
+        ]
     return [
         SignalItem(
             id=item.id,
             timestamp=item.created_at,
-            symbol=item.symbol,
+            symbol=item.asset,
             market=item.market,
             timeframe=item.timeframe,
             decision=item.decision,
-            score=item.final_score,
-            risk_level=item.risk_level,
-            trend=item.trend,
-            reasoning=item.reasoning,
+            score=item.score,
+            risk_level=item.risk,
+            entry_time=item.entry_time,
+            exit_time=item.exit_time,
+            duration=f"{item.duration_minutes} minutos" if item.duration_minutes and item.duration_minutes < 60 else ("1 hora" if item.duration_minutes == 60 else None),
+            signal_valid_until=item.signal_valid_until,
+            trend="-",
+            reasoning=" | ".join(part for part in [item.technical_reasons, item.fundamental_reasons, item.block_reasons] if part),
         )
         for item in records
     ]
@@ -250,28 +267,34 @@ def build_events(db: Session) -> list[EconomicEventItem]:
     ]
 
 
-def build_live_board(db: Session, persist: bool = False):
+def build_live_board(db: Session, persist: bool = False) -> list[LiveAssetBoardItem]:
     engine = AnalysisEngine(db)
-    board: list = []
+    board: list[LiveAssetBoardItem] = []
     assets = db.scalars(select(MonitoredAsset).where(MonitoredAsset.enabled == 1).order_by(MonitoredAsset.priority.asc())).all()
     for asset in assets:
         timeframe = [part.strip() for part in asset.timeframes.split(",") if part.strip()][0]
         analysis = engine.analyze_live_asset(asset.symbol, asset.market, timeframe, persist=persist)
         board.append(
-            {
-                "symbol": asset.symbol,
-                "market": asset.market,
-                "timeframe": timeframe,
-                "provider": asset.provider,
-                "score": analysis.score,
-                "decision": analysis.decision,
-                "risk_level": analysis.risk_level,
-                "trend": str(analysis.indicator_snapshot["trend_primary"]),
-                "spread": float(analysis.indicator_snapshot["spread"]),
-                "volatility": float(analysis.indicator_snapshot["volatility_pct"]),
-                "reasons": analysis.reasons,
-                "blockers": analysis.blockers,
-                "indicator_snapshot": analysis.indicator_snapshot,
-            }
+            LiveAssetBoardItem(
+                symbol=asset.symbol,
+                market=asset.market,
+                timeframe=timeframe,
+                provider=asset.provider,
+                score=analysis.score,
+                decision=analysis.decision,
+                risk_level=analysis.risk_level,
+                entry_time=analysis.entry_time,
+                exit_time=analysis.exit_time,
+                duration=analysis.duration,
+                signal_valid_until=analysis.signal_valid_until,
+                trend=str(analysis.indicator_snapshot["trend_primary"]),
+                spread=float(analysis.indicator_snapshot["spread"]),
+                volatility=float(analysis.indicator_snapshot["volatility_pct"]),
+                technical_reasons=analysis.technical_reasons,
+                fundamental_reasons=analysis.fundamental_reasons,
+                block_reasons=analysis.block_reasons,
+                reasons=analysis.reasons,
+                indicator_snapshot=analysis.indicator_snapshot,
+            )
         )
-    return sorted(board, key=lambda item: item["score"], reverse=True)
+    return sorted(board, key=lambda item: item.score, reverse=True)

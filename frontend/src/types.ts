@@ -19,6 +19,10 @@ export interface SignalItem {
   decision: string;
   score: number;
   risk_level: string;
+  entry_time: string | null;
+  exit_time: string | null;
+  duration: string | null;
+  signal_valid_until: string | null;
   trend: string;
   reasoning: string;
 }
@@ -145,11 +149,17 @@ export interface LiveAssetBoardItem {
   score: number;
   decision: string;
   risk_level: string;
+  entry_time: string | null;
+  exit_time: string | null;
+  duration: string | null;
+  signal_valid_until: string | null;
   trend: string;
   spread: number;
   volatility: number;
+  technical_reasons: string[];
+  fundamental_reasons: string[];
+  block_reasons: string[];
   reasons: string[];
-  blockers: string[];
   indicator_snapshot: Record<string, string | number | boolean>;
 }
 
