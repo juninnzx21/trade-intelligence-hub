@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -40,6 +42,26 @@ from app.schemas.analysis import (
 )
 from app.services.analysis import AnalysisEngine
 from app.services.live_feed import cache_live_board
+
+
+def _safe_float(value: object, fallback: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return number if math.isfinite(number) else fallback
+
+
+def _safe_indicator_snapshot(snapshot: dict[str, object]) -> dict[str, float | str | bool]:
+    cleaned: dict[str, float | str | bool] = {}
+    for key, value in snapshot.items():
+        if isinstance(value, bool):
+            cleaned[key] = value
+        elif isinstance(value, (int, float)):
+            cleaned[key] = _safe_float(value)
+        else:
+            cleaned[key] = str(value)
+    return cleaned
 
 
 def build_dashboard_payload(db: Session, persist_live_board: bool = False) -> DashboardPayload:
@@ -89,10 +111,10 @@ def build_dashboard_payload(db: Session, persist_live_board: bool = False) -> Da
             strategy_name=item.strategy_name,
             symbol=item.symbol,
             timeframe=item.timeframe,
-            win_rate=item.win_rate,
-            payoff=item.payoff,
-            drawdown=item.drawdown,
-            net_profit=item.net_profit,
+            win_rate=_safe_float(item.win_rate),
+            payoff=_safe_float(item.payoff),
+            drawdown=_safe_float(item.drawdown),
+            net_profit=_safe_float(item.net_profit),
             worst_streak=item.worst_streak,
             best_hour=item.best_hour,
             risk_label=item.risk_label,
@@ -103,8 +125,8 @@ def build_dashboard_payload(db: Session, persist_live_board: bool = False) -> Da
         ForwardTestMetricItem(
             window_name=item.window_name,
             signals_count=item.signals_count,
-            win_rate=item.win_rate,
-            average_score=item.average_score,
+            win_rate=_safe_float(item.win_rate),
+            average_score=_safe_float(item.average_score),
             status=item.status,
             notes=item.notes,
         )
@@ -200,7 +222,7 @@ def build_opportunities(db: Session) -> list[OpportunityCard]:
             symbol=item.symbol,
             market=item.market,
             timeframe=item.timeframe,
-            score=item.final_score,
+            score=_safe_float(item.final_score),
             decision=item.decision,
             risk_level=item.risk_level,
             trend=item.trend,
@@ -222,7 +244,7 @@ def build_signals(db: Session) -> list[SignalItem]:
                 market=item.market,
                 timeframe=item.timeframe,
                 decision=item.decision,
-                score=item.final_score,
+                score=_safe_float(item.final_score),
                 risk_level=item.risk_level,
                 entry_time=None,
                 exit_time=None,
@@ -241,7 +263,7 @@ def build_signals(db: Session) -> list[SignalItem]:
             market=item.market,
             timeframe=item.timeframe,
             decision=item.decision,
-            score=item.score,
+            score=_safe_float(item.score),
             risk_level=item.risk,
             entry_time=item.entry_time,
             exit_time=item.exit_time,
@@ -281,7 +303,7 @@ def build_live_board(db: Session, persist: bool = False) -> list[LiveAssetBoardI
                 market=asset.market,
                 timeframe=timeframe,
                 provider=asset.provider,
-                score=analysis.score,
+                score=_safe_float(analysis.score),
                 decision=analysis.decision,
                 risk_level=analysis.risk_level,
                 entry_time=analysis.entry_time,
@@ -289,13 +311,13 @@ def build_live_board(db: Session, persist: bool = False) -> list[LiveAssetBoardI
                 duration=analysis.duration,
                 signal_valid_until=analysis.signal_valid_until,
                 trend=str(analysis.indicator_snapshot["trend_primary"]),
-                spread=float(analysis.indicator_snapshot["spread"]),
-                volatility=float(analysis.indicator_snapshot["volatility_pct"]),
+                spread=_safe_float(analysis.indicator_snapshot.get("spread")),
+                volatility=_safe_float(analysis.indicator_snapshot.get("volatility_pct")),
                 technical_reasons=analysis.technical_reasons,
                 fundamental_reasons=analysis.fundamental_reasons,
                 block_reasons=analysis.block_reasons,
                 reasons=analysis.reasons,
-                indicator_snapshot=analysis.indicator_snapshot,
+                indicator_snapshot=_safe_indicator_snapshot(analysis.indicator_snapshot),
             )
         )
     board = sorted(board, key=lambda item: item.score, reverse=True)
