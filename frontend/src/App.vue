@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { api } from "./api";
+import { mockDashboard } from "./mockDashboard";
 import type { DashboardPayload, LiveAssetBoardItem, SignalItem } from "./types";
 
 const loading = ref(true);
@@ -68,8 +69,12 @@ async function loadDashboard() {
   error.value = "";
   try {
     dashboard.value = await api.getDashboard();
+    autoRefreshLabel.value = "WebSocket/polling ao vivo";
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Falha ao carregar dashboard";
+    dashboard.value = mockDashboard;
+    autoRefreshLabel.value = "Modo contingencia local ativo";
+    exportMessage.value = "API indisponivel na VPS. Painel carregado com base observadora local.";
+    error.value = "";
   } finally {
     loading.value = false;
   }
@@ -83,7 +88,12 @@ async function refreshLiveBoard() {
     const board = await api.refreshLiveBoard();
     applyLiveBoard(board);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Falha ao atualizar a varredura";
+    if (!dashboard.value) {
+      dashboard.value = mockDashboard;
+    }
+    applyLiveBoard(mockDashboard.live_board);
+    autoRefreshLabel.value = "Modo contingencia local ativo";
+    error.value = "";
   } finally {
     refreshingLive.value = false;
   }
