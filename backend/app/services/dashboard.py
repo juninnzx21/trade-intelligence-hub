@@ -43,6 +43,15 @@ from app.schemas.analysis import (
 from app.services.analysis import AnalysisEngine
 from app.services.live_feed import cache_live_board
 
+MAX_SIGNAL_ITEMS = 120
+MAX_EVENT_ITEMS = 16
+MAX_BACKTEST_ITEMS = 12
+MAX_FORWARD_TEST_ITEMS = 12
+MAX_AUDIT_ITEMS = 8
+MAX_REASON_ITEMS = 4
+POSITIVE_RESULTS = ("WIN", "TARGET", "POSITIVE")
+CLOSED_RESULTS_EXCLUDED = ("PENDING", "NEUTRAL")
+
 
 def _safe_float(value: object, fallback: float = 0.0) -> float:
     try:
@@ -119,7 +128,7 @@ def build_dashboard_payload(db: Session, persist_live_board: bool = False) -> Da
             best_hour=item.best_hour,
             risk_label=item.risk_label,
         )
-        for item in db.scalars(select(BacktestMetric).order_by(BacktestMetric.net_profit.desc())).all()
+        for item in db.scalars(select(BacktestMetric).order_by(BacktestMetric.net_profit.desc()).limit(MAX_BACKTEST_ITEMS)).all()
     ]
     forward_tests = [
         ForwardTestMetricItem(
@@ -130,11 +139,13 @@ def build_dashboard_payload(db: Session, persist_live_board: bool = False) -> Da
             status=item.status,
             notes=item.notes,
         )
-        for item in db.scalars(select(ForwardTestMetric).order_by(ForwardTestMetric.signals_count.desc())).all()
+        for item in db.scalars(
+            select(ForwardTestMetric).order_by(ForwardTestMetric.signals_count.desc()).limit(MAX_FORWARD_TEST_ITEMS)
+        ).all()
     ]
     audits = [
         AuditLogItem(created_at=item.created_at, actor=item.actor, action=item.action, details=item.details)
-        for item in db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc())).all()[:8]
+        for item in db.scalars(select(AuditLog).order_by(AuditLog.created_at.desc()).limit(MAX_AUDIT_ITEMS)).all()
     ]
     users = [
         UserAccountItem(
@@ -195,12 +206,26 @@ def build_summary(db: Session) -> DashboardSummary:
     sell = db.scalar(select(func.count()).select_from(MarketSnapshot).where(MarketSnapshot.decision == "VENDA")) or 0
     no_trade = db.scalar(select(func.count()).select_from(MarketSnapshot).where(MarketSnapshot.decision == "NAO_OPERAR")) or 0
     premium = db.scalar(select(func.count()).select_from(MarketSnapshot).where(MarketSnapshot.final_score >= 86)) or 0
-    records = db.scalars(select(MarketSnapshot).order_by(MarketSnapshot.final_score.desc())).all()
-    best_symbol = records[0].symbol if records else "-"
-    best_timeframe = records[0].timeframe if records else "-"
-    positive = [item for item in records if item.future_result.upper() in {"WIN", "TARGET", "POSITIVE"}]
-    closed = [item for item in records if item.future_result.upper() not in {"PENDING", "NEUTRAL"}]
-    win_rate = round((len(positive) / len(closed)) * 100, 2) if closed else 0.0
+    best = db.scalars(select(MarketSnapshot).order_by(MarketSnapshot.final_score.desc()).limit(1)).first()
+    best_symbol = best.symbol if best else "-"
+    best_timeframe = best.timeframe if best else "-"
+    positive = (
+        db.scalar(
+            select(func.count())
+            .select_from(MarketSnapshot)
+            .where(func.upper(func.coalesce(MarketSnapshot.future_result, "")).in_(POSITIVE_RESULTS))
+        )
+        or 0
+    )
+    closed = (
+        db.scalar(
+            select(func.count())
+            .select_from(MarketSnapshot)
+            .where(~func.upper(func.coalesce(MarketSnapshot.future_result, "")).in_(CLOSED_RESULTS_EXCLUDED))
+        )
+        or 0
+    )
+    win_rate = round((positive / closed) * 100, 2) if closed else 0.0
     active_alerts = db.scalar(select(func.count()).select_from(EconomicEvent)) or 0
     return DashboardSummary(
         total_signals=total,
@@ -216,7 +241,7 @@ def build_summary(db: Session) -> DashboardSummary:
 
 
 def build_opportunities(db: Session) -> list[OpportunityCard]:
-    records = db.scalars(select(MarketSnapshot).order_by(MarketSnapshot.final_score.desc())).all()
+    records = db.scalars(select(MarketSnapshot).order_by(MarketSnapshot.final_score.desc()).limit(6)).all()
     return [
         OpportunityCard(
             symbol=item.symbol,
@@ -226,16 +251,16 @@ def build_opportunities(db: Session) -> list[OpportunityCard]:
             decision=item.decision,
             risk_level=item.risk_level,
             trend=item.trend,
-            reasons=[part.strip() for part in item.reasoning.split("|") if part.strip()][:4],
+            reasons=[part.strip() for part in item.reasoning.split("|") if part.strip()][:MAX_REASON_ITEMS],
         )
-        for item in records[:6]
+        for item in records
     ]
 
 
 def build_signals(db: Session) -> list[SignalItem]:
-    records = db.scalars(select(DecisionSignal).order_by(DecisionSignal.created_at.desc())).all()
+    records = db.scalars(select(DecisionSignal).order_by(DecisionSignal.created_at.desc()).limit(MAX_SIGNAL_ITEMS)).all()
     if not records:
-        fallback = db.scalars(select(MarketSnapshot).order_by(MarketSnapshot.created_at.desc())).all()
+        fallback = db.scalars(select(MarketSnapshot).order_by(MarketSnapshot.created_at.desc()).limit(MAX_SIGNAL_ITEMS)).all()
         return [
             SignalItem(
                 id=item.id,
@@ -286,7 +311,7 @@ def build_events(db: Session) -> list[EconomicEventItem]:
             source=item.source,
             summary=item.summary,
         )
-        for item in db.scalars(select(EconomicEvent).order_by(EconomicEvent.event_time.asc())).all()
+        for item in db.scalars(select(EconomicEvent).order_by(EconomicEvent.event_time.asc()).limit(MAX_EVENT_ITEMS)).all()
     ]
 
 
