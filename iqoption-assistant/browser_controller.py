@@ -83,21 +83,24 @@ class BrowserController:
             self.logger.error("A pagina nao respondeu como esperado.")
             return False
 
-    def wait_for_manual_login(self, page: Page) -> None:
+    def wait_for_manual_login(self, page: Page, interactive: bool = True) -> bool:
         if not self._login_needed(page):
             self.logger.info("Nenhum bloqueio de login detectado.")
-            return
+            return True
 
         self.logger.warning("A pagina parece exigir login manual. A automacao vai pausar.")
-        print("Login manual necessario na IQ Option. Faça o login no Chrome e pressione ENTER quando terminar.")
-        input("> ")
+        if interactive:
+            print("Login manual necessario na IQ Option. Faça o login no Chrome e pressione ENTER quando terminar.")
+            input("> ")
+        else:
+            return False
 
         deadline = time.time() + self.settings.login_wait_timeout_seconds
         while time.time() < deadline:
             page.wait_for_timeout(2_000)
             if not self._login_needed(page):
                 self.logger.info("Login manual concluido.")
-                return
+                return True
         raise TimeoutError("Tempo esgotado aguardando login manual.")
 
     def select_asset(self, page: Page, asset: str) -> bool:

@@ -69,48 +69,6 @@ def confirmation_prompt(signal: TradeSignal) -> bool:
     return input("Digite SIM para continuar: ").strip().upper() == "SIM"
 
 
-def _handle_start_event(
-    trader: AutoTrader,
-    controller: BrowserController,
-    page,
-    logger: logging.Logger,
-    pin_guard: PinGuard,
-    integrity_guard: IntegrityGuard,
-    reason: str,
-    pin: str | None,
-) -> None:
-    try:
-        if not pin:
-            message = "START cancelado: PIN nao informado."
-            logger.warning(message)
-            trader.panel.show_message(message) if trader.panel is not None else None
-            return
-        if not pin_guard.validate_pin(pin):
-            status = pin_guard.status()
-            message = "START bloqueado: PIN bloqueado." if status.blocked else f"START bloqueado: PIN invalido. Tentativas restantes: {status.remaining_attempts}"
-            logger.warning(message)
-            trader.panel.show_message(message) if trader.panel is not None else None
-            trader._refresh_panel()
-            return
-        integrity = integrity_guard.check_integrity()
-        trader.integrity_status = integrity.status
-        if not integrity.ok:
-            message = "START bloqueado: falha na integridade local."
-            logger.error("%s | detalhes=%s", message, "; ".join(integrity.details))
-            trader.panel.show_message(message) if trader.panel is not None else None
-            trader.security.audit_event("integrity_check_failed", {"details": integrity.details})
-            trader._refresh_panel()
-            return
-        account_label = controller.detect_account_label(page)
-        decision = trader.arm_demo_session(account_label)
-        logger.info("Armar sessao | allowed=%s | reason=%s | source=%s", decision.allowed, decision.reason, reason)
-        if trader.panel is not None:
-            trader.panel.show_message(decision.reason)
-    except Exception as exc:
-        logger.error("Falha ao iniciar automacao: %s", exc)
-        trader.request_stop("Erro ao iniciar automacao")
-
-
 def main() -> int:
     args = parse_args()
     settings = load_settings()
@@ -144,12 +102,8 @@ def main() -> int:
         print(f"Auditoria exportada para: {export_path}")
         return 0
 
-    panel: FloatingStopPanel | None = None
-    trader_holder: dict[str, AutoTrader] = {}
-
     from auto_trader import AutoTrader
     from browser_controller import BrowserController
-    from floating_stop import FloatingStopPanel
 
     controller = BrowserController(settings, logger)
     session = controller.connect()
@@ -158,72 +112,51 @@ def main() -> int:
         trader = AutoTrader(
             settings=settings,
             controller=controller,
-            panel=panel,
             logger=logger,
             security=security,
             pin_guard=pin_guard,
             integrity_guard=integrity_guard,
+            event_callback=lambda message: print(f"[EVENTO] {message}"),
         )
         trader.integrity_status = integrity_guard.check_integrity().status
-        trader_holder["instance"] = trader
-        panel = FloatingStopPanel(
-            on_start=lambda reason, pin: logger.info("Evento START recebido: %s | pin_informado=%s", reason, bool(pin)),
-            on_stop=lambda reason: trader_holder["instance"].request_stop(reason),
-            logger=logger,
+        logger.info(
+            "Iniciando iqoption-assistant CLI | dry_run=%s demo_only=%s allow_auto_click=%s",
+            settings.dry_run,
+            settings.demo_only,
+            settings.allow_auto_click,
         )
-        trader.panel = panel
-        panel.start()
-        trader._refresh_panel()
-
-        logger.info("Iniciando iqoption-assistant | dry_run=%s demo_only=%s allow_auto_click=%s session_arm_required=%s", settings.dry_run, settings.demo_only, settings.allow_auto_click, settings.session_arm_required)
-        security.audit_event("assistant_started", {
-            "dry_run": settings.dry_run,
-            "demo_only": settings.demo_only,
-            "allow_auto_click": settings.allow_auto_click,
-            "session_arm_required": settings.session_arm_required,
-            "encryption_ready": security.encryption_ready,
-        })
+        security.audit_event(
+            "assistant_started",
+            {
+                "dry_run": settings.dry_run,
+                "demo_only": settings.demo_only,
+                "allow_auto_click": settings.allow_auto_click,
+                "mode": "CLI",
+            },
+        )
         controller.open_traderoom(session.page)
-        controller.wait_for_manual_login(session.page)
+        login_ready = controller.wait_for_manual_login(session.page, interactive=True)
+        if not login_ready:
+            print("Login manual ainda pendente.")
+            return 1
 
-        panel.on_start = lambda reason, pin: _handle_start_event(trader, controller, session.page, logger, pin_guard, integrity_guard, reason, pin)
-
-        while True:
-            if trader.state.stop_requested:
-                print(f"Automacao parada pelo usuario: {trader.state.stop_reason}")
-                return 0
-
+        if args.signal_text or any((args.ativo, args.direcao, args.horario, args.expiracao)):
             signal = collect_signal(args)
-            if not trader.state.session_armed and not confirmation_prompt(signal):
-                logger.warning("Operacao cancelada pelo usuario antes do agendamento.")
+            if not confirmation_prompt(signal):
                 print("Operacao cancelada.")
-                if args.signal_text:
-                    return 0
-                continue
-
+                return 0
             decision = trader.process_signal(signal, session.page, allow_click_demo_only_flag=args.allow_click_demo_only)
             print(decision.reason)
-            if decision.allowed:
-                print(f"Operacao demo processada: {signal.direction} {signal.asset} {signal.expiration}")
-            else:
-                print(f"Entrada autorizada manualmente: {signal.direction} {signal.asset} {signal.expiration}")
-                controller.highlight_direction(session.page, signal.direction)
-                if signal.direction == "COMPRA":
-                    print("Clique manualmente em COMPRA.")
-                else:
-                    print("Clique manualmente em VENDA.")
+            return 0
 
-            if args.signal_text:
-                return 0
-            print("Digite o proximo sinal ou Ctrl+C para sair.")
+        print("Modo CLI carregado. Para a interface desktop premium use: python -m ui.app")
         return 0
     finally:
-        logger.info("Sessao encerrada.")
-        security.audit_event("assistant_stopped", {"panel_present": panel is not None})
-        if panel is not None:
-            panel.stop()
+        logger.info("Sessao CLI encerrada.")
+        security.audit_event("assistant_stopped", {"mode": "CLI"})
         session.close()
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

@@ -113,6 +113,25 @@ Rodar o app:
 python main.py
 ```
 
+## UI Premium Desktop
+
+Rodar:
+
+```powershell
+cd "C:\Users\junin\OneDrive\Documentos\New project\iqoption-assistant"
+.venv\Scripts\activate
+pip install -r requirements.txt
+python -m ui.app
+```
+
+Fluxo:
+
+- o app desktop sempre inicia em `PARADO`
+- `START` abre modal de PIN e so arma `DEMO_ARMADO` se PIN, integridade, conta DEMO e guardas passarem
+- `STOP` interrompe tudo imediatamente e cria a `STOP_TRADING.flag`
+- os logs atualizam em tempo real sem travar a UI
+- o painel mostra dashboard, sinais, seguranca, logs e configuracoes em modo SaaS local
+
 Ou com parametros:
 
 ```powershell
@@ -146,7 +165,7 @@ python main.py --signal-text "ativo=EUR/USD | direcao=VENDA | horario=14:35 | ex
 4. Acessa `https://iqoption.com/traderoom`.
 5. Se houver login pendente, pausa para login manual.
 6. Tenta preparar a selecao do ativo informado.
-7. Mostra painel flutuante always-on-top com `START` e `STOP`.
+7. Mostra a UI desktop premium com `START` e `STOP`.
 8. `START` pede o PIN `12345690`, valida integridade e so arma a sessao em demo.
 9. Registra hotkeys:
    - `CTRL + SHIFT + A` para `START`
