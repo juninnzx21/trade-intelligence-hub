@@ -69,14 +69,18 @@ def main() -> int:
     settings = load_settings()
     logger = build_logger(settings.logs_dir, settings.log_level)
     panel: FloatingStopPanel | None = None
+    trader_holder: dict[str, AutoTrader] = {}
 
     controller = BrowserController(settings, logger)
     session = controller.connect()
 
     try:
-        panel = FloatingStopPanel(on_stop=lambda reason: trader.request_stop(reason), logger=logger)
-        panel.start()
         trader = AutoTrader(settings=settings, controller=controller, panel=panel, logger=logger)
+        trader_holder["instance"] = trader
+        panel = FloatingStopPanel(on_stop=lambda reason: trader_holder["instance"].request_stop(reason), logger=logger)
+        trader.panel = panel
+        panel.start()
+        trader._refresh_panel()
 
         logger.info("Iniciando iqoption-assistant | dry_run=%s demo_only=%s allow_auto_click=%s session_arm_required=%s", settings.dry_run, settings.demo_only, settings.allow_auto_click, settings.session_arm_required)
         controller.open_traderoom(session.page)

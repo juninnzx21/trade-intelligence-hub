@@ -23,7 +23,7 @@ class SessionState:
 
 
 class AutoTrader:
-    def __init__(self, settings: Settings, controller: BrowserController, panel: FloatingStopPanel, logger: logging.Logger) -> None:
+    def __init__(self, settings: Settings, controller: BrowserController, panel: FloatingStopPanel | None, logger: logging.Logger) -> None:
         self.settings = settings
         self.controller = controller
         self.panel = panel
@@ -149,5 +149,7 @@ class AutoTrader:
             time.sleep(1)
 
     def _refresh_panel(self) -> None:
+        if self.panel is None:
+            return
         status = "PARADO" if self.state.stop_requested else ("DEMO_ARMADO" if self.state.session_armed else "DRY_RUN")
         self.panel.update(PanelState(status=status, current_asset=self.current_asset, next_signal=self.next_signal))
