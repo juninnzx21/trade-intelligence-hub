@@ -159,7 +159,9 @@ Arquivos do fallback online:
 
 - `deploy/fabweb/roboiqopition.api.php`
 - `deploy/fabweb/roboiqopition.htaccess`
+- `deploy/fabweb/README.md`
 - `scripts/test_api.ps1`
+- `scripts/test_public_api.ps1`
 
 Logs de acesso no host:
 

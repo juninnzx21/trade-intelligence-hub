@@ -12,10 +12,10 @@ Require all granted
 
 <IfModule mod_rewrite.c>
 RewriteEngine On
-RewriteCond %{REQUEST_METHOD} =OPTIONS
-RewriteRule ^api/v1/.*$ api.php [L,QSA]
-
-RewriteRule ^api/v1/.*$ api.php [L,QSA]
+RewriteCond %{REQUEST_URI} ^/api/
+RewriteRule ^api\.php$ - [L]
+RewriteCond %{REQUEST_URI} ^/api/
+RewriteRule ^api/(.*)$ api.php [L,QSA]
 
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
