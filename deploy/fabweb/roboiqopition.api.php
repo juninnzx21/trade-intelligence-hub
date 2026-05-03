@@ -240,6 +240,79 @@ function dashboard_payload(): array
     ];
 }
 
+function find_live_signal(array $payload, string $asset, ?string $timeframe = null): ?array
+{
+    foreach ($payload['live_board'] as $signal) {
+        if (strcasecmp($signal['symbol'], $asset) !== 0) {
+            continue;
+        }
+        if ($timeframe !== null && strcasecmp($signal['timeframe'], $timeframe) !== 0) {
+            continue;
+        }
+        return $signal;
+    }
+    return null;
+}
+
+function market_status_payload(array $payload): array
+{
+    return [
+        'status' => 'ok',
+        'mode' => 'fabweb-fallback',
+        'analysis_available' => true,
+        'sources' => ['fabweb-observer-cache', 'public-fallback'],
+        'supported_assets' => array_map(static fn (array $asset): string => $asset['symbol'], $payload['monitored_assets']),
+        'latest_cached_at' => (new DateTimeImmutable('now', new DateTimeZone('America/Sao_Paulo')))->format(DATE_ATOM),
+    ];
+}
+
+function build_decision_response(array $payload, string $asset, string $timeframe): array
+{
+    $signal = find_live_signal($payload, $asset, $timeframe) ?? find_live_signal($payload, $asset);
+    if ($signal === null) {
+        return [
+            'asset' => $asset,
+            'timeframe' => $timeframe,
+            'action' => 'NAO_OPERAR',
+            'confidence_score' => 0,
+            'technical_score' => 0,
+            'macro_score' => 0,
+            'risk_score' => 100,
+            'valid_until' => iso_offset(1),
+            'reasons' => [],
+            'blocks' => ['Ativo/timeframe sem cache publico suficiente no fallback online.'],
+            'created_at' => iso_offset(0),
+            'data_sources' => ['fabweb-observer-cache'],
+            'mode' => 'fallback',
+        ];
+    }
+
+    $technicalScore = max(0, min(100, (int) round(($signal['score'] * 0.6) + 8)));
+    $macroScore = max(0, min(100, (int) round(($signal['score'] * 0.45) + (empty($signal['fundamental_reasons']) ? 0 : 12))));
+    $riskScore = match ($signal['risk_level']) {
+        'Baixo' => 28,
+        'Moderado' => 46,
+        'Alto' => 78,
+        default => 55,
+    };
+
+    return [
+        'asset' => $signal['symbol'],
+        'timeframe' => $signal['timeframe'],
+        'action' => $signal['decision'],
+        'confidence_score' => (float) $signal['score'],
+        'technical_score' => $technicalScore,
+        'macro_score' => $macroScore,
+        'risk_score' => $riskScore,
+        'valid_until' => $signal['signal_valid_until'],
+        'reasons' => array_values(array_unique(array_merge($signal['technical_reasons'] ?? [], $signal['fundamental_reasons'] ?? [], $signal['reasons'] ?? []))),
+        'blocks' => $signal['block_reasons'] ?? [],
+        'created_at' => iso_offset(0),
+        'data_sources' => [$signal['provider'] ?? 'fabweb-observer-cache'],
+        'mode' => 'fallback',
+    ];
+}
+
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $payload = dashboard_payload();
 
@@ -264,6 +337,44 @@ if ($path === '/api/v1/dashboard' || $path === '/api/v1/reports/export') {
 if ($path === '/api/v1/market/live-board' || $path === '/api/v1/market/live-board/refresh') {
     header('Content-Type: application/json; charset=UTF-8');
     echo json_encode($payload['live_board'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+if ($path === '/api/v1/market/status') {
+    header('Content-Type: application/json; charset=UTF-8');
+    echo json_encode(market_status_payload($payload), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+if ($path === '/api/v1/market/latest') {
+    $asset = trim((string) ($_GET['asset'] ?? ''));
+    if ($asset === '') {
+        http_response_code(400);
+        header('Content-Type: application/json; charset=UTF-8');
+        echo json_encode(['detail' => 'asset is required'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+    header('Content-Type: application/json; charset=UTF-8');
+    echo json_encode(build_decision_response($payload, $asset, (string) ($_GET['timeframe'] ?? '')), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+if ($path === '/api/v1/market/analyze') {
+    $raw = file_get_contents('php://input') ?: '{}';
+    $body = json_decode($raw, true);
+    if (!is_array($body)) {
+        $body = [];
+    }
+    $asset = trim((string) ($body['asset'] ?? ''));
+    $timeframe = trim((string) ($body['timeframe'] ?? 'M1'));
+    if ($asset === '') {
+        http_response_code(400);
+        header('Content-Type: application/json; charset=UTF-8');
+        echo json_encode(['detail' => 'asset is required'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+    header('Content-Type: application/json; charset=UTF-8');
+    echo json_encode(build_decision_response($payload, $asset, $timeframe), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
 
