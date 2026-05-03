@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
         self.control_panel.integrity_button.clicked.connect(lambda: self.controller.request_verify_integrity.emit())
         self.control_panel.audit_button.clicked.connect(lambda: self.controller.request_export_audit.emit())
         self.control_panel.open_button.clicked.connect(lambda: self.controller.request_open_iq_option.emit())
+        self.control_panel.refresh_account_button.clicked.connect(lambda: self.controller.request_refresh_account.emit())
         self.control_panel.clear_stop_button.clicked.connect(lambda: self.controller.request_clear_stop.emit())
 
         outer.addLayout(cards_grid)
@@ -268,7 +269,14 @@ class MainWindow(QMainWindow):
         self.topbar.update_status(status, account)
 
         self.status_cards["status"].update_content(status, "Controle central local do modo de execucao.")
-        self.status_cards["account"].update_content(account, "Auto-click continua restrito a DEMO.")
+        account_help = (
+            "Conta DEMO confirmada. Auto-click continua sujeito aos demais guardas."
+            if account == "DEMO"
+            else "Conta REAL detectada. START segue bloqueado."
+            if account == "REAL"
+            else "Nao foi possivel confirmar conta DEMO. Selecione manualmente Conta Demo na IQ Option e clique em Atualizar Conta."
+        )
+        self.status_cards["account"].update_content(account, account_help)
         self.status_cards["integrity"].update_content(str(payload.get("integrity_status", "NAO GERADA")), str(payload.get("integrity_manifest", "")))
         self.status_cards["pin"].update_content(str(payload.get("pin_status", "NAO VALIDADO")), "PIN nunca e salvo em texto puro.")
 
@@ -288,7 +296,16 @@ class MainWindow(QMainWindow):
                 "Auditoria": str(payload.get("audit_file", "-")),
             }
         )
-        self.safety_panel.set_result(f"Conta detectada: {account}\nSTOP flag ativa: {payload.get('stop_flag_exists')}")
+        guidance = (
+            "Conta DEMO confirmada."
+            if account == "DEMO"
+            else "Conta REAL detectada. START bloqueado."
+            if account == "REAL"
+            else "Nao foi possivel confirmar conta DEMO. Selecione manualmente Conta Demo na IQ Option e clique em Atualizar Conta."
+        )
+        self.safety_panel.set_result(
+            f"Conta detectada: {account}\nSTOP flag ativa: {payload.get('stop_flag_exists')}\n{guidance}"
+        )
         self._update_settings_table(payload)
 
     def _update_settings_table(self, payload: dict) -> None:

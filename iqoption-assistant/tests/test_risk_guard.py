@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import Settings
-from risk_guard import ArmSessionContext, ExecutionContext, can_arm_session, can_auto_click, ensure_real_account_protection, is_demo_account, pre_click_guard
+from risk_guard import ArmSessionContext, ExecutionContext, can_arm_session, can_auto_click, ensure_real_account_protection, infer_account_mode, is_demo_account, pre_click_guard
 from signal_parser import BRAZIL_TZ, build_signal
 
 
@@ -47,6 +47,13 @@ def test_detect_demo_account() -> None:
     assert is_demo_account("Conta DEMO")
     assert is_demo_account("Practice balance")
     assert not is_demo_account("Conta Real")
+
+
+def test_infer_account_mode_variations() -> None:
+    assert infer_account_mode("Conta demo", "Saldo demo") == "DEMO"
+    assert infer_account_mode("Practice balance") == "DEMO"
+    assert infer_account_mode("Conta Real") == "REAL"
+    assert infer_account_mode("Balance available") == "DESCONHECIDO"
 
 
 def test_block_auto_click_when_dry_run_true() -> None:
@@ -109,7 +116,7 @@ def test_arm_session_requires_valid_pin_and_integrity() -> None:
         pin_blocked=False,
         integrity_ok=True,
         stop_flag_exists=False,
-        account_is_demo=True,
+        account_mode="DEMO",
     )
     decision = can_arm_session(make_settings(dry_run=False, allow_auto_click=True), context)
     assert not decision.allowed
@@ -122,7 +129,20 @@ def test_arm_session_allows_demo_when_guards_pass() -> None:
         pin_blocked=False,
         integrity_ok=True,
         stop_flag_exists=False,
-        account_is_demo=True,
+        account_mode="DEMO",
     )
     decision = can_arm_session(make_settings(dry_run=False, allow_auto_click=True), context)
     assert decision.allowed
+
+
+def test_arm_session_blocks_real_account_explicitly() -> None:
+    context = ArmSessionContext(
+        pin_validated=True,
+        pin_blocked=False,
+        integrity_ok=True,
+        stop_flag_exists=False,
+        account_mode="REAL",
+    )
+    decision = can_arm_session(make_settings(dry_run=False, allow_auto_click=True), context)
+    assert not decision.allowed
+    assert "conta REAL detectada" in decision.reason

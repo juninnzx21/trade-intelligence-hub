@@ -22,7 +22,7 @@ from config import Settings, load_settings
 from integrity_guard import IntegrityGuard
 from main import build_logger
 from pin_guard import PinGuard
-from risk_guard import ArmSessionContext, can_arm_session, is_demo_account
+from risk_guard import ArmSessionContext, can_arm_session
 from security import SecurityManager
 from signal_parser import TradeSignal, parse_signal_input
 
@@ -99,12 +99,42 @@ class AutomationWorker(QObject):
                 self.toast.emit("warning", "Login manual necessario. Entre na IQ Option no Chrome e depois volte ao app.")
                 self._update_runtime_status(account="DESCONHECIDO", last_event="Aguardando login manual.")
                 return
-            account_label = self.browser_controller.detect_account_label(self.browser_session.page)
-            account = "DEMO" if is_demo_account(account_label) else "DESCONHECIDO"
-            self._update_runtime_status(account=account, last_event="Traderoom pronta no Chrome.")
+            account = self.browser_controller.detect_account_mode(self.browser_session.page)
+            guidance = (
+                "Conta DEMO confirmada. Traderoom pronta no Chrome."
+                if account == "DEMO"
+                else "Conta REAL detectada. START seguira bloqueado."
+                if account == "REAL"
+                else "Nao foi possivel confirmar conta DEMO. Selecione manualmente Conta Demo na IQ Option e clique em Atualizar Conta."
+            )
+            self._update_runtime_status(account=account, last_event=guidance)
+            if account == "REAL":
+                self.toast.emit("error", guidance)
             self.action_finished.emit("Abrir IQ Option", True)
         except Exception as exc:
             self._handle_failure("Abrir IQ Option", exc)
+
+    @Slot()
+    def refresh_account(self) -> None:
+        try:
+            assert self.browser_controller is not None
+            if self.browser_session is None:
+                self.toast.emit("warning", "Abra a IQ Option antes de atualizar a conta.")
+                return
+            account = self.browser_controller.detect_account_mode(self.browser_session.page)
+            message = (
+                "Conta DEMO confirmada."
+                if account == "DEMO"
+                else "Conta REAL detectada. START continuara bloqueado."
+                if account == "REAL"
+                else "Nao foi possivel confirmar conta DEMO. Selecione manualmente Conta Demo na IQ Option e clique em Atualizar Conta."
+            )
+            self._update_runtime_status(account=account, last_event=message)
+            level = "success" if account == "DEMO" else "error" if account == "REAL" else "warning"
+            self.toast.emit(level, message)
+            self.action_finished.emit("Atualizar Conta", account == "DEMO")
+        except Exception as exc:
+            self._handle_failure("Atualizar Conta", exc)
 
     @Slot(str)
     def start_automation(self, pin: str) -> None:
@@ -136,7 +166,7 @@ class AutomationWorker(QObject):
                 return
 
             page = self.browser_session.page
-            account_label = self.browser_controller.detect_account_label(page)
+            account_mode = self.browser_controller.detect_account_mode(page)
             preview_guard = can_arm_session(
                 self.settings,
                 ArmSessionContext(
@@ -144,15 +174,15 @@ class AutomationWorker(QObject):
                     pin_blocked=self.pin_guard.status().blocked,
                     integrity_ok=integrity.ok,
                     stop_flag_exists=self.settings.stop_file.exists(),
-                    account_is_demo=is_demo_account(account_label),
+                    account_mode=account_mode,
                 ),
             )
             if not preview_guard.allowed:
                 self.toast.emit("error", preview_guard.reason)
-                self._update_runtime_status(last_event=preview_guard.reason)
+                self._update_runtime_status(account=account_mode, last_event=preview_guard.reason)
                 return
 
-            decision = self.trader.arm_demo_session(account_label)
+            decision = self.trader.arm_demo_session(account_mode)
             level = "success" if decision.allowed else "error"
             self.toast.emit(level, decision.reason)
             self.action_finished.emit("START", decision.allowed)
@@ -332,8 +362,7 @@ class AutomationWorker(QObject):
             try:
                 page = self.browser_session.page
                 if self.browser_controller.browser_alive(page):
-                    account_label = self.browser_controller.detect_account_label(page)
-                    self.trader.account_status = "DEMO" if is_demo_account(account_label) else "DESCONHECIDO"
+                    self.trader.account_status = self.browser_controller.detect_account_mode(page, verbose=False)
                     current_asset = self.browser_controller.detect_current_asset(page)
                     if current_asset:
                         self.trader.current_asset = current_asset
@@ -371,6 +400,7 @@ class UiController(QObject):
     action_finished = Signal(str, bool)
 
     request_open_iq_option = Signal()
+    request_refresh_account = Signal()
     request_start = Signal(str)
     request_stop = Signal()
     request_clear_stop = Signal()
@@ -390,6 +420,7 @@ class UiController(QObject):
 
         self.thread.started.connect(self.worker.initialize)
         self.request_open_iq_option.connect(self.worker.open_iq_option)
+        self.request_refresh_account.connect(self.worker.refresh_account)
         self.request_start.connect(self.worker.start_automation)
         self.request_stop.connect(self.worker.stop_automation)
         self.request_clear_stop.connect(self.worker.clear_stop_flag)

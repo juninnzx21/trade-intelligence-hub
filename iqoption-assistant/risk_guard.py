@@ -30,7 +30,7 @@ class ArmSessionContext:
     pin_blocked: bool
     integrity_ok: bool
     stop_flag_exists: bool
-    account_is_demo: bool
+    account_mode: str
 
 
 def signal_in_execution_window(signal: TradeSignal, now: datetime | None = None, tolerance_seconds: int = 5) -> GuardDecision:
@@ -43,11 +43,42 @@ def signal_in_execution_window(signal: TradeSignal, now: datetime | None = None,
     return GuardDecision(True, "Horario dentro da janela permitida.")
 
 
+def infer_account_mode(*texts: str | None) -> str:
+    normalized_parts = [str(text or "").upper() for text in texts if str(text or "").strip()]
+    if not normalized_parts:
+        return "DESCONHECIDO"
+    normalized = " \n ".join(normalized_parts)
+
+    demo_tokens = (
+        "DEMO",
+        "PRACTICE",
+        "CONTA DEMO",
+        "SALDO DEMO",
+        "PRACTICE BALANCE",
+        "DEMO BALANCE",
+        "TREINO",
+        "TREINAMENTO",
+    )
+    real_tokens = (
+        "REAL",
+        "CONTA REAL",
+        "SALDO REAL",
+        "REAL BALANCE",
+    )
+
+    if any(token in normalized for token in demo_tokens):
+        return "DEMO"
+    if any(token in normalized for token in real_tokens):
+        return "REAL"
+    return "DESCONHECIDO"
+
+
 def is_demo_account(label_text: str | None) -> bool:
-    if not label_text:
-        return False
-    normalized = label_text.upper()
-    return any(token in normalized for token in ("DEMO", "PRACTICE", "TREINO", "TREINAMENTO"))
+    return infer_account_mode(label_text) == "DEMO"
+
+
+def is_real_account(label_text: str | None) -> bool:
+    return infer_account_mode(label_text) == "REAL"
 
 
 def can_auto_click(
@@ -92,7 +123,9 @@ def can_arm_session(settings: Settings, context: ArmSessionContext) -> GuardDeci
         return GuardDecision(False, "START bloqueado: ALLOW_AUTO_CLICK=false.")
     if not settings.demo_only:
         return GuardDecision(False, "START bloqueado: DEMO_ONLY=false.")
-    if not context.account_is_demo:
+    if context.account_mode == "REAL":
+        return GuardDecision(False, "START bloqueado: conta REAL detectada.")
+    if context.account_mode != "DEMO":
         return GuardDecision(False, "START bloqueado: conta nao confirmada como DEMO.")
     return GuardDecision(True, "Sessao pronta para DEMO_ARMADO.")
 

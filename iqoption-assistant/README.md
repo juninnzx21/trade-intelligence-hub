@@ -139,6 +139,7 @@ Fluxo:
 - `STOP` interrompe tudo imediatamente e cria a `STOP_TRADING.flag`
 - os logs atualizam em tempo real sem travar a UI
 - o painel mostra dashboard, sinais, seguranca, logs e configuracoes em modo SaaS local
+- use `Atualizar Conta` depois de trocar manualmente para DEMO na traderoom, caso a UI ainda mostre `DESCONHECIDO`
 
 ## Empacotamento Windows
 
@@ -206,6 +207,7 @@ No app, se precisar, voce ainda pode usar:
 
 - `Configuracoes` -> `Gerar Manifesto`
 - `Dashboard` -> `Verificar Integridade`
+- `Dashboard` -> `Atualizar Conta`
 
 Ver logs:
 
@@ -246,17 +248,39 @@ python main.py --signal-text "ativo=EUR/USD | direcao=VENDA | horario=14:35 | ex
 4. Acessa `https://iqoption.com/traderoom`.
 5. Se houver login pendente, pausa para login manual.
 6. Tenta preparar a selecao do ativo informado.
-7. Mostra a UI desktop premium com `START` e `STOP`.
-8. `START` pede o PIN `12345690`, valida integridade e so arma a sessao em demo.
-9. Registra hotkeys:
+7. Detecta visualmente o modo da conta:
+   - `DEMO`
+   - `REAL`
+   - `DESCONHECIDO`
+8. Se a conta continuar `DESCONHECIDO`, selecione manualmente a conta demo na IQ Option e clique em `Atualizar Conta`.
+9. Mostra a UI desktop premium com `START` e `STOP`.
+10. `START` pede o PIN `12345690`, valida integridade e so arma a sessao em demo.
+11. Registra hotkeys:
    - `CTRL + SHIFT + A` para `START`
    - `CTRL + SHIFT + S` para `STOP`
-10. Mostra confirmacao:
+12. Mostra confirmacao:
    - `Confirmar entrada? ativo=X direcao=Y horario=Z expiracao=W`
-11. Dispara alerta 10 segundos antes.
-12. No horario exato:
+13. Dispara alerta 10 segundos antes.
+14. No horario exato:
    - em `dry-run`: apenas destaca o botao e orienta clique manual
    - em demo armado: so clica se todos os guardas passarem
+
+## Deteccao de conta DEMO
+
+O app agora registra logs mais detalhados para ajudar a diagnosticar a conta atual, incluindo:
+
+- URL atual
+- titulo da pagina
+- estado de login detectado
+- textos visiveis relacionados a `Demo`, `Practice`, `Real` e `Balance`
+
+Se a traderoom abrir mas a UI continuar mostrando `DESCONHECIDO`:
+
+1. troque manualmente para a conta demo na IQ Option
+2. volte ao app
+3. clique em `Atualizar Conta`
+
+Se o app detectar `REAL`, o `START` continuara bloqueado e a UI mostrara alerta explicito.
 
 ## Armando a sessao DEMO
 

@@ -11,6 +11,7 @@ from typing import Iterable
 from playwright.sync_api import BrowserContext, Error, Page, Playwright, sync_playwright
 
 from config import Settings
+from risk_guard import infer_account_mode
 
 
 @dataclass
@@ -77,7 +78,8 @@ class BrowserController:
     def ensure_page_ready(self, page: Page) -> bool:
         try:
             page.wait_for_load_state("domcontentloaded", timeout=15_000)
-            _ = page.title()
+            title = page.title()
+            self.logger.info("Pagina pronta | url=%s | titulo=%s", page.url, title)
             return True
         except Exception:
             self.logger.error("A pagina nao respondeu como esperado.")
@@ -159,21 +161,30 @@ class BrowserController:
         return current_asset == asset
 
     def detect_account_label(self, page: Page) -> str:
-        probes: Iterable[str] = (
-            "text=/demo|practice|treino|treinamento/i",
-            "text=/real/i",
-        )
-        for selector in probes:
-            try:
-                locator = page.locator(selector).first
-                if locator.count() > 0:
-                    text = locator.inner_text(timeout=2_000).strip()
-                    if text:
-                        self.logger.info("Rotulo de conta detectado: %s", text)
-                        return text
-            except Exception:
-                continue
-        return ""
+        label, _ = self._find_account_hint(page)
+        if label:
+            self.logger.info("Rotulo de conta detectado: %s", label)
+        return label
+
+    def detect_account_mode(self, page: Page, *, verbose: bool = True) -> str:
+        url = page.url
+        title = self._safe_title(page)
+        login_needed = self._login_needed(page)
+        label, visible_texts = self._find_account_hint(page)
+        mode = infer_account_mode(label, title, url, *visible_texts)
+
+        if verbose:
+            sample = " | ".join(text[:120] for text in visible_texts[:5]) if visible_texts else "-"
+            self.logger.info(
+                "Detectando conta | modo=%s | url=%s | titulo=%s | login_pendente=%s | rotulo=%s | textos=%s",
+                mode,
+                url,
+                title or "-",
+                login_needed,
+                label or "-",
+                sample,
+            )
+        return mode
 
     def highlight_direction(self, page: Page, direction: str) -> bool:
         text_candidates = {
@@ -224,6 +235,48 @@ class BrowserController:
             return not page.is_closed()
         except Exception:
             return False
+
+    def _find_account_hint(self, page: Page) -> tuple[str, list[str]]:
+        texts: list[str] = []
+        probes: Iterable[str] = (
+            "text=/demo|practice|treino|treinamento|real|balance|saldo/i",
+            "[class*=balance]",
+            "[class*=account]",
+            "[data-test*=balance]",
+            "[data-test*=account]",
+            "header",
+        )
+        for selector in probes:
+            try:
+                locator = page.locator(selector)
+                count = min(locator.count(), 4)
+                for index in range(count):
+                    text = locator.nth(index).inner_text(timeout=1_500).strip()
+                    if text and text not in texts:
+                        texts.append(text)
+            except Exception:
+                continue
+
+        body_text = self._body_text(page)
+        if body_text:
+            texts.append(body_text)
+
+        label = next((text for text in texts if infer_account_mode(text) != "DESCONHECIDO"), "")
+        return label, texts
+
+    def _body_text(self, page: Page) -> str:
+        try:
+            text = page.locator("body").inner_text(timeout=2_000)
+            compact = " ".join(text.split())
+            return compact[:1200]
+        except Exception:
+            return ""
+
+    def _safe_title(self, page: Page) -> str:
+        try:
+            return page.title()
+        except Exception:
+            return ""
 
     def _ensure_page(self, context: BrowserContext) -> Page:
         for page in context.pages:

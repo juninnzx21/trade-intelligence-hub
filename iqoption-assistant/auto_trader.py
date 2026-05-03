@@ -68,8 +68,8 @@ class AutoTrader:
         self.next_signal = "-"
         self._refresh_state()
 
-    def arm_demo_session(self, account_label: str) -> GuardDecision:
-        self.account_status = "DEMO" if is_demo_account(account_label) else "DESCONHECIDO"
+    def arm_demo_session(self, account_mode: str) -> GuardDecision:
+        self.account_status = account_mode
         integrity = self.integrity_guard.check_integrity()
         self.integrity_status = integrity.status
         guard = can_arm_session(
@@ -79,7 +79,7 @@ class AutoTrader:
                 pin_blocked=self.pin_guard.status().blocked,
                 integrity_ok=integrity.ok,
                 stop_flag_exists=self.state.stop_requested or self.settings.stop_file.exists(),
-                account_is_demo=is_demo_account(account_label),
+                account_mode=account_mode,
             ),
         )
         if not guard.allowed:
@@ -88,7 +88,7 @@ class AutoTrader:
                 "automation_start_blocked",
                 {
                     "reason": guard.reason,
-                    "account_label": account_label,
+                    "account_mode": account_mode,
                     "integrity_status": integrity.status,
                     "pin_validated": self.pin_guard.is_validated(),
                 },
@@ -104,7 +104,7 @@ class AutoTrader:
         self.state.stop_reason = ""
         self.last_event = "Automacao iniciada pelo usuario"
         self.logger.warning(self.last_event)
-        self.security.audit_event("automation_started", {"account_label": account_label, "mode": "DEMO_ARMADO"})
+        self.security.audit_event("automation_started", {"account_mode": account_mode, "mode": "DEMO_ARMADO"})
         self._emit_event(self.last_event)
         self._refresh_state()
         return GuardDecision(True, "DEMO_ARMADO")
@@ -173,9 +173,9 @@ class AutoTrader:
         if not self._wait_until_signal(signal, page):
             return GuardDecision(False, self.state.stop_reason or "Sinal cancelado.")
 
-        account_label = self.controller.detect_account_label(page)
-        account_is_demo = is_demo_account(account_label)
-        self.account_status = "DEMO" if account_is_demo else "DESCONHECIDO"
+        account_mode = self.controller.detect_account_mode(page)
+        account_is_demo = account_mode == "DEMO"
+        self.account_status = account_mode
         click_guard = can_auto_click(
             settings=self.settings,
             allow_click_demo_only_flag=allow_click_demo_only_flag,
@@ -297,4 +297,3 @@ class AutoTrader:
     def _emit_event(self, message: str) -> None:
         if self.event_callback is not None:
             self.event_callback(message)
-

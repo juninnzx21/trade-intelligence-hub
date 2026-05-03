@@ -28,6 +28,7 @@ class ControlPanel(QFrame):
         self.integrity_button = QPushButton("Verificar Integridade")
         self.audit_button = QPushButton("Exportar Auditoria")
         self.open_button = QPushButton("Abrir IQ Option")
+        self.refresh_account_button = QPushButton("Atualizar Conta")
         self.clear_stop_button = QPushButton("Limpar STOP flag")
         self.clear_stop_button.setObjectName("GhostButton")
 
@@ -36,9 +37,9 @@ class ControlPanel(QFrame):
         grid.addWidget(self.integrity_button, 1, 0)
         grid.addWidget(self.audit_button, 1, 1)
         grid.addWidget(self.open_button, 2, 0)
-        grid.addWidget(self.clear_stop_button, 2, 1)
+        grid.addWidget(self.refresh_account_button, 2, 1)
+        grid.addWidget(self.clear_stop_button, 3, 0, 1, 2)
 
         outer.addWidget(title)
         outer.addWidget(subtitle)
         outer.addLayout(grid)
-
