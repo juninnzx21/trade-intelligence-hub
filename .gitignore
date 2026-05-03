@@ -7,6 +7,7 @@ __pycache__/
 .DS_Store
 node_modules/
 dist/
+build/
 .idea/
 .vscode/
 backend/.venv/

@@ -5,11 +5,13 @@ import logging
 from pathlib import Path
 import sys
 
+from PySide6.QtCore import QUrl
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QUrl
 
-BASE_DIR = Path(__file__).resolve().parents[1]
+from config import resolve_base_dir
+
+BASE_DIR = resolve_base_dir()
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 

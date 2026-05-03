@@ -38,11 +38,19 @@ iqoption-assistant/
   signal_parser.py
   browser_controller.py
   auto_trader.py
-  floating_stop.py
   risk_guard.py
   pin_guard.py
   integrity_guard.py
   audit_exporter.py
+  ui/
+    app.py
+    controller.py
+    main_window.py
+    theme.py
+    widgets/
+  build_windows.ps1
+  iqoption-assistant.spec
+  requirements-dev.txt
   storage/
     logs/
   tests/
@@ -131,6 +139,56 @@ Fluxo:
 - `STOP` interrompe tudo imediatamente e cria a `STOP_TRADING.flag`
 - os logs atualizam em tempo real sem travar a UI
 - o painel mostra dashboard, sinais, seguranca, logs e configuracoes em modo SaaS local
+
+## Empacotamento Windows
+
+Gerar o executavel `.exe`:
+
+```powershell
+cd "C:\Users\junin\OneDrive\Documentos\New project\iqoption-assistant"
+.venv\Scripts\activate
+pip install -r requirements-dev.txt
+powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
+```
+
+Saida esperada:
+
+```text
+dist/
+  iqoption-assistant/
+    iqoption-assistant.exe
+    IQ Option Assistant.lnk
+    .env
+    .env.example
+    README.md
+    storage/
+      logs/
+```
+
+Rodar o executavel:
+
+```powershell
+cd ".\dist\iqoption-assistant"
+.\iqoption-assistant.exe
+```
+
+Editar `.env`:
+
+- abra `dist\iqoption-assistant\.env`
+- ajuste apenas os valores necessarios
+- mantenha `DEMO_ONLY=true` para nunca liberar conta real
+
+Resetar a `STOP` flag:
+
+```powershell
+Remove-Item ".\dist\iqoption-assistant\storage\STOP_TRADING.flag" -ErrorAction SilentlyContinue
+```
+
+Ver logs:
+
+- log operacional: `dist\iqoption-assistant\storage\logs\trading-assistant.log`
+- auditoria exportada: `dist\iqoption-assistant\storage\logs\audit.exported.log`
+- o executavel continua lendo `.env`, `storage` e `README.md` externamente, sem embutir esses arquivos como segredo interno
 
 Ou com parametros:
 

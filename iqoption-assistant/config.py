@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import os
+import sys
 
 try:
     from dotenv import load_dotenv
@@ -26,6 +27,16 @@ def _to_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def resolve_base_dir(base_dir: Path | None = None) -> Path:
+    if base_dir is not None:
+        return base_dir
+    if os.getenv("IQASSISTANT_BASE_DIR"):
+        return Path(os.getenv("IQASSISTANT_BASE_DIR", "")).resolve()
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
 
 
 @dataclass(frozen=True)
@@ -57,7 +68,7 @@ class Settings:
 
 
 def load_settings(base_dir: Path | None = None) -> Settings:
-    root = base_dir or Path(__file__).resolve().parent
+    root = resolve_base_dir(base_dir)
     env_path = root / ".env"
     if env_path.exists():
         load_dotenv(env_path)
