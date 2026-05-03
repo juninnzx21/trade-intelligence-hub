@@ -64,6 +64,18 @@ def confirmation_prompt(signal: TradeSignal) -> bool:
     return input("Digite SIM para continuar: ").strip().upper() == "SIM"
 
 
+def _handle_start_event(trader: AutoTrader, controller: BrowserController, page, logger: logging.Logger, reason: str) -> None:
+    try:
+        account_label = controller.detect_account_label(page)
+        decision = trader.arm_demo_session(account_label)
+        logger.info("Armar sessao | allowed=%s | reason=%s | source=%s", decision.allowed, decision.reason, reason)
+        if trader.panel is not None:
+            trader.panel.show_message(decision.reason)
+    except Exception as exc:
+        logger.error("Falha ao iniciar automacao: %s", exc)
+        trader.request_stop("Erro ao iniciar automacao")
+
+
 def main() -> int:
     args = parse_args()
     settings = load_settings()
@@ -77,7 +89,11 @@ def main() -> int:
     try:
         trader = AutoTrader(settings=settings, controller=controller, panel=panel, logger=logger)
         trader_holder["instance"] = trader
-        panel = FloatingStopPanel(on_stop=lambda reason: trader_holder["instance"].request_stop(reason), logger=logger)
+        panel = FloatingStopPanel(
+            on_start=lambda reason: logger.info("Evento START recebido: %s", reason),
+            on_stop=lambda reason: trader_holder["instance"].request_stop(reason),
+            logger=logger,
+        )
         trader.panel = panel
         panel.start()
         trader._refresh_panel()
@@ -86,16 +102,7 @@ def main() -> int:
         controller.open_traderoom(session.page)
         controller.wait_for_manual_login(session.page)
 
-        account_label = controller.detect_account_label(session.page)
-        if settings.session_arm_required:
-            print("Digite ARMAR MODO DEMO para armar a sessao em conta demo, ou pressione ENTER para permanecer em DRY_RUN.")
-            arm_input = input("> ").strip().upper()
-            if arm_input == "ARMAR MODO DEMO":
-                arm_decision = trader.arm_demo_session(account_label)
-                print(arm_decision.reason)
-                logger.info("Armar sessao | allowed=%s | reason=%s", arm_decision.allowed, arm_decision.reason)
-            else:
-                logger.info("Sessao mantida em modo nao armado.")
+        panel.on_start = lambda reason: _handle_start_event(trader, controller, session.page, logger, reason)
 
         while True:
             if trader.state.stop_requested:
@@ -103,7 +110,7 @@ def main() -> int:
                 return 0
 
             signal = collect_signal(args)
-            if not confirmation_prompt(signal):
+            if not trader.state.session_armed and not confirmation_prompt(signal):
                 logger.warning("Operacao cancelada pelo usuario antes do agendamento.")
                 print("Operacao cancelada.")
                 if args.signal_text:

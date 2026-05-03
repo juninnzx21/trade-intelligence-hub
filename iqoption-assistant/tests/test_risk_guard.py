@@ -81,3 +81,14 @@ def test_pre_click_guard_blocks_when_dry_run() -> None:
     decision = pre_click_guard(make_settings(dry_run=True, allow_auto_click=True), signal, context, now=signal.entry_at)
     assert not decision.allowed
     assert "DRY_RUN=true" in decision.reason
+
+
+def test_auto_click_guard_requires_demo_only_true() -> None:
+    decision = can_auto_click(
+        settings=make_settings(dry_run=False, demo_only=False, allow_auto_click=True),
+        allow_click_demo_only_flag=True,
+        account_is_demo=True,
+        confirmation_text="CONFIRMO DEMO",
+    )
+    assert not decision.allowed
+    assert "DEMO_ONLY=false" in decision.reason

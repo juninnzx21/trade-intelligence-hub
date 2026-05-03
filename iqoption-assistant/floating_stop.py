@@ -15,10 +15,12 @@ class PanelState:
     status: str
     current_asset: str
     next_signal: str
+    trades_executed: int
 
 
 class FloatingStopPanel:
-    def __init__(self, on_stop: Callable[[str], None], logger: logging.Logger) -> None:
+    def __init__(self, on_start: Callable[[str], None], on_stop: Callable[[str], None], logger: logging.Logger) -> None:
+        self.on_start = on_start
         self.on_stop = on_stop
         self.logger = logger
         self._queue: Queue[tuple[str, object]] = Queue()
@@ -27,6 +29,7 @@ class FloatingStopPanel:
         self._status_var: tk.StringVar | None = None
         self._asset_var: tk.StringVar | None = None
         self._signal_var: tk.StringVar | None = None
+        self._trades_var: tk.StringVar | None = None
         self._hotkey_listener: keyboard.GlobalHotKeys | None = None
 
     def start(self) -> None:
@@ -53,24 +56,30 @@ class FloatingStopPanel:
         self.on_stop(reason)
         self.show_message("Automacao parada pelo usuario")
 
+    def _trigger_start(self, reason: str) -> None:
+        self.logger.info("Start acionado: %s", reason)
+        self.on_start(reason)
+
     def _start_hotkey(self) -> None:
         self._hotkey_listener = keyboard.GlobalHotKeys({
+            "<ctrl>+<shift>+a": lambda: self._trigger_start("Hotkey CTRL+SHIFT+A"),
             "<ctrl>+<shift>+s": lambda: self._trigger_stop("Hotkey CTRL+SHIFT+S"),
         })
         self._hotkey_listener.start()
 
     def _run(self) -> None:
         root = tk.Tk()
-        root.title("IQ Assistant STOP")
+        root.title("IQ Assistant Control")
         root.attributes("-topmost", True)
         root.resizable(False, False)
-        root.geometry("340x180+30+30")
+        root.geometry("360x235+30+30")
         root.configure(bg="#111827")
 
         self._root = root
         self._status_var = tk.StringVar(value="Status: PARADO")
         self._asset_var = tk.StringVar(value="Ativo atual: -")
         self._signal_var = tk.StringVar(value="Proximo sinal: -")
+        self._trades_var = tk.StringVar(value="Operacoes na sessao: 0")
 
         frame = tk.Frame(root, bg="#111827", padx=14, pady=14)
         frame.pack(fill="both", expand=True)
@@ -79,8 +88,24 @@ class FloatingStopPanel:
         tk.Label(frame, textvariable=self._status_var, fg="#93c5fd", bg="#111827", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(10, 0))
         tk.Label(frame, textvariable=self._asset_var, fg="#d1d5db", bg="#111827", font=("Segoe UI", 10)).pack(anchor="w", pady=(8, 0))
         tk.Label(frame, textvariable=self._signal_var, fg="#d1d5db", bg="#111827", font=("Segoe UI", 10), wraplength=300, justify="left").pack(anchor="w", pady=(6, 12))
+        tk.Label(frame, textvariable=self._trades_var, fg="#d1d5db", bg="#111827", font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 12))
+        button_row = tk.Frame(frame, bg="#111827")
+        button_row.pack(fill="x")
         tk.Button(
-            frame,
+            button_row,
+            text="START",
+            command=lambda: self._trigger_start("Botao START flutuante"),
+            bg="#16a34a",
+            fg="#ffffff",
+            activebackground="#15803d",
+            activeforeground="#ffffff",
+            font=("Segoe UI", 12, "bold"),
+            relief="flat",
+            padx=18,
+            pady=8,
+        ).pack(side="left", expand=True, fill="x", padx=(0, 8))
+        tk.Button(
+            button_row,
             text="STOP",
             command=lambda: self._trigger_stop("Botao STOP flutuante"),
             bg="#dc2626",
@@ -91,7 +116,7 @@ class FloatingStopPanel:
             relief="flat",
             padx=18,
             pady=8,
-        ).pack(anchor="center")
+        ).pack(side="left", expand=True, fill="x", padx=(8, 0))
 
         root.protocol("WM_DELETE_WINDOW", lambda: self._trigger_stop("Janela STOP fechada"))
         root.after(150, self._drain_queue)
@@ -113,6 +138,8 @@ class FloatingStopPanel:
                         self._asset_var.set(f"Ativo atual: {payload.current_asset or '-'}")
                     if self._signal_var:
                         self._signal_var.set(f"Proximo sinal: {payload.next_signal or '-'}")
+                    if self._trades_var:
+                        self._trades_var.set(f"Operacoes na sessao: {payload.trades_executed}")
                 if action == "message" and isinstance(payload, str) and self._signal_var:
                     self._signal_var.set(payload)
         except Empty:
