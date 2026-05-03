@@ -12,6 +12,8 @@ $envExamplePath = Join-Path $projectRoot ".env.example"
 $venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $storageRoot = Join-Path $appRoot "storage"
 $storageLogs = Join-Path $storageRoot "logs"
+$sourceIntegrityManifest = Join-Path $projectRoot "storage\integrity_manifest.json"
+$distIntegrityManifest = Join-Path $storageRoot "integrity_manifest.json"
 $shortcutPath = Join-Path $appRoot "IQ Option Assistant.lnk"
 $exePath = Join-Path $appRoot "iqoption-assistant.exe"
 
@@ -48,6 +50,12 @@ New-Item -ItemType Directory -Force -Path $storageLogs | Out-Null
 New-Item -ItemType File -Force -Path (Join-Path $storageRoot ".gitkeep") | Out-Null
 New-Item -ItemType File -Force -Path (Join-Path $storageLogs ".gitkeep") | Out-Null
 
+& $pythonCmd main.py --write-integrity
+if (-not (Test-Path $sourceIntegrityManifest)) {
+    throw "Manifesto de integridade nao encontrado em $sourceIntegrityManifest"
+}
+Copy-Item $sourceIntegrityManifest $distIntegrityManifest -Force
+
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $exePath
@@ -58,3 +66,4 @@ $shortcut.Save()
 Write-Host "Build finalizado em $appRoot"
 Write-Host "Executavel: $exePath"
 Write-Host "Atalho: $shortcutPath"
+Write-Host "Manifesto: $distIntegrityManifest"

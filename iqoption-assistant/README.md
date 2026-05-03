@@ -162,7 +162,14 @@ dist/
     .env.example
     README.md
     storage/
+      integrity_manifest.json
       logs/
+```
+
+O build do Windows ja gera o manifesto automaticamente em:
+
+```text
+dist\iqoption-assistant\storage\integrity_manifest.json
 ```
 
 Rodar o executavel:
@@ -183,6 +190,23 @@ Resetar a `STOP` flag:
 ```powershell
 Remove-Item ".\dist\iqoption-assistant\storage\STOP_TRADING.flag" -ErrorAction SilentlyContinue
 ```
+
+Fallback manual para regenerar manifesto:
+
+```powershell
+cd "C:\Users\junin\OneDrive\Documentos\New project\iqoption-assistant"
+.\.venv\Scripts\python.exe main.py --write-integrity
+
+Copy-Item `
+  ".\storage\integrity_manifest.json" `
+  ".\dist\iqoption-assistant\storage\integrity_manifest.json" `
+  -Force
+```
+
+No app, se precisar, voce ainda pode usar:
+
+- `Configuracoes` -> `Gerar Manifesto`
+- `Dashboard` -> `Verificar Integridade`
 
 Ver logs:
 

@@ -30,7 +30,7 @@ Objetivo desta revisao:
 | `STOP` cria `STOP_TRADING.flag` | OK | validado chamando `AutoTrader.request_stop()` |
 | Logs acessiveis | OK | `dist/iqoption-assistant/storage/logs/trading-assistant.log` criado |
 | Exportacao de auditoria | OK | `python main.py --export-audit` retornou sucesso |
-| Integridade depois do build | OK no codigo-fonte / limitada no pacote | `python main.py --write-integrity` + `--check-integrity` passaram no source; o `.exe` nao expõe CLI de integridade |
+| Integridade depois do build | OK | manifesto presente em `dist/iqoption-assistant/storage/integrity_manifest.json` e validado no source |
 | `README.md` do pacote `dist` | OK | `dist/iqoption-assistant/README.md` presente |
 | `.env` externo editavel | OK | `dist/iqoption-assistant/.env` presente |
 | `storage/` externo acessivel | OK | `dist/iqoption-assistant/storage/` presente |
@@ -43,6 +43,7 @@ cd "C:\Users\junin\OneDrive\Documentos\New project\iqoption-assistant"
 .venv\Scripts\python.exe -m pytest
 python -m compileall .
 powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
+Test-Path ".\dist\iqoption-assistant\storage\integrity_manifest.json"
 ```
 
 Validacao do executavel:
@@ -154,6 +155,7 @@ Presentes no pacote:
 - `dist/iqoption-assistant/.env.example`
 - `dist/iqoption-assistant/README.md`
 - `dist/iqoption-assistant/storage/`
+- `dist/iqoption-assistant/storage/integrity_manifest.json`
 - `dist/iqoption-assistant/storage/logs/`
 - `dist/iqoption-assistant/IQ Option Assistant.lnk`
 
@@ -170,6 +172,18 @@ Presentes no pacote:
 
 - manifesto regravado com `python main.py --write-integrity`
 - checagem passou com `python main.py --check-integrity`
+- manifesto copiado para `dist/iqoption-assistant/storage/integrity_manifest.json`
+- checagem de existencia:
+
+```powershell
+Test-Path ".\dist\iqoption-assistant\storage\integrity_manifest.json"
+```
+
+Resultado observado:
+
+```text
+True
+```
 
 ## Ressalvas Controladas
 
@@ -190,4 +204,3 @@ Essas ressalvas nao removem protecoes nem abrem caminho para conta real; apenas 
    - `storage/logs/audit.exported.log`
 5. Se o layout da IQ Option mudar, revisar seletores em `browser_controller.py`.
 6. Se for necessario validar integridade no pacote final, a proxima melhoria correta e adicionar um comando de manutencao no `.exe` ou um utilitario companion para release.
-
