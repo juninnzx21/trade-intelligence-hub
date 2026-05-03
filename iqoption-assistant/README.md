@@ -140,6 +140,60 @@ Fluxo:
 - os logs atualizam em tempo real sem travar a UI
 - o painel mostra dashboard, sinais, seguranca, logs e configuracoes em modo SaaS local
 - use `Atualizar Conta` depois de trocar manualmente para DEMO na traderoom, caso a UI ainda mostre `DESCONHECIDO`
+- a aba `Inteligencia` usa o modulo compartilhado `market_intelligence` em modo local ou online
+
+## Inteligencia de Mercado Compartilhada
+
+O projeto agora usa um modulo compartilhado em `market_intelligence/` para gerar:
+
+- `COMPRA`
+- `VENDA`
+- `NAO_OPERAR`
+
+Sempre com:
+
+- score
+- motivos
+- bloqueios
+- validade curta
+- fontes de dados
+
+Fontes publicas e oficiais integradas nesta primeira camada:
+
+- OANDA v20 para Forex
+- Binance para candles publicos de cripto
+- BLS para macro dos EUA
+- FRED para series macro
+- calendarios publicos do Fed/ECB
+
+Variaveis de ambiente:
+
+```env
+MARKET_MODE=local
+MARKET_API_URL=
+MARKET_API_TOKEN=
+OANDA_API_TOKEN=
+OANDA_ACCOUNT_ID=
+FRED_API_KEY=
+BLS_API_KEY=
+MIN_CONFIDENCE_SCORE=70
+BLOCK_NEWS_MINUTES_BEFORE=30
+BLOCK_NEWS_MINUTES_AFTER=15
+```
+
+Modos:
+
+- `MARKET_MODE=local`: o app desktop roda a analise dentro do proprio Windows
+- `MARKET_MODE=online`: o app chama a API hospedada na VPS/Fab Web
+
+Fluxo recomendado:
+
+1. Abra a IQ Option
+2. Confirme conta `DEMO`
+3. Use `Atualizar Conta`
+4. Abra a aba `Inteligencia`
+5. Clique `Atualizar Analise`
+6. Se a decisao for boa, use `Enviar para Sinais`
 
 ## Empacotamento Windows
 
@@ -208,6 +262,7 @@ No app, se precisar, voce ainda pode usar:
 - `Configuracoes` -> `Gerar Manifesto`
 - `Dashboard` -> `Verificar Integridade`
 - `Dashboard` -> `Atualizar Conta`
+- `Inteligencia` -> `Atualizar Analise`
 
 Ver logs:
 
@@ -281,6 +336,20 @@ Se a traderoom abrir mas a UI continuar mostrando `DESCONHECIDO`:
 3. clique em `Atualizar Conta`
 
 Se o app detectar `REAL`, o `START` continuara bloqueado e a UI mostrara alerta explicito.
+
+## API Online de Inteligencia
+
+Quando `MARKET_MODE=online`, o app Windows pode consumir:
+
+- `POST /api/v1/market/analyze`
+- `GET /api/v1/market/status`
+- `GET /api/v1/market/latest?asset=EUR/USD`
+
+O token deve ficar no `.env`:
+
+```env
+MARKET_API_TOKEN=change-me
+```
 
 ## Armando a sessao DEMO
 

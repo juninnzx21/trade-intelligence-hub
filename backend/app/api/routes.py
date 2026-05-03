@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
@@ -14,10 +14,21 @@ from app.services.backtest import run_backtest_report, sync_backtest_metrics
 from app.services.dashboard import build_dashboard_payload, build_events, build_live_board, build_opportunities, build_signals, build_summary
 from app.services.forward_test import evaluate_open_signals
 from app.services.live_feed import get_cached_live_board
+from app.services.market_intelligence import MarketIntelligenceService, PROJECT_ROOT
 from app.core.config import get_settings
+from market_intelligence import load_market_intelligence_config
 
 router = APIRouter()
 settings = get_settings()
+market_settings = load_market_intelligence_config(PROJECT_ROOT / "backend")
+
+
+def require_market_token(authorization: str | None = Header(default=None)) -> None:
+    token = market_settings.market_api_token
+    if not token:
+        return
+    if authorization != f"Bearer {token}":
+        raise HTTPException(status_code=401, detail="Nao autorizado para market intelligence.")
 
 
 @router.get("/health")
@@ -179,3 +190,30 @@ def analysis_preview(symbol: str, db: Session = Depends(get_db)) -> dict:
         "latest_decision": latest.decision if latest else "NAO_OPERAR",
         "reasons": summarize_reasons(records),
     }
+
+
+@router.get("/market/status")
+def market_status(db: Session = Depends(get_db)):
+    service = MarketIntelligenceService(db)
+    return service.status()
+
+
+@router.get("/market/latest")
+def market_latest(asset: str, db: Session = Depends(get_db)):
+    service = MarketIntelligenceService(db)
+    latest = service.latest(asset)
+    return latest.to_dict() if latest else {"asset": asset, "status": "not_found"}
+
+
+@router.post("/market/analyze")
+def market_analyze(
+    payload: dict,
+    db: Session = Depends(get_db),
+    _auth: None = Depends(require_market_token),
+):
+    asset = str(payload.get("asset", "")).strip()
+    timeframe = str(payload.get("timeframe", "M1")).strip()
+    if not asset:
+        raise HTTPException(status_code=400, detail="asset e obrigatorio")
+    service = MarketIntelligenceService(db)
+    return service.analyze(asset, timeframe).to_dict()

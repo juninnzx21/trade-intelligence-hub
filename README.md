@@ -14,6 +14,7 @@ Plataforma profissional de analise inteligente para trade com foco em decisao re
 
 - Dashboard SaaS com live board, score, risco, horarios operacionais e historico
 - Motor de analise com engines separados: tecnico, fundamentalista, historico, validacao, timing e scoring
+- Engine compartilhada `market_intelligence/` para desktop Windows + backend online
 - Regras de bloqueio que priorizam `NAO_OPERAR`
 - API para analise de oportunidade e simulacao de snapshots
 - Persistencia de candles, indicadores, sinais, resultados e logs
@@ -121,6 +122,43 @@ Credenciais estruturais:
 - `POST /api/v1/backtest/run`
 - `POST /api/v1/forward-test/evaluate`
 - `WS /api/v1/market/live-board/ws`
+- `POST /api/v1/market/analyze`
+- `GET /api/v1/market/status`
+- `GET /api/v1/market/latest?asset=EUR/USD`
+
+## Market Intelligence Compartilhado
+
+O repositorio agora inclui um modulo `market_intelligence/` reutilizado por:
+
+- `iqoption-assistant` no Windows
+- backend online na VPS/Fab Web
+
+Fontes publicas/oficiais preparadas:
+
+- OANDA v20
+- Binance market data
+- BLS
+- FRED
+- calendarios publicos do Fed/ECB
+
+Variaveis principais:
+
+- `MARKET_MODE`
+- `MARKET_API_URL`
+- `MARKET_API_TOKEN`
+- `OANDA_API_TOKEN`
+- `OANDA_ACCOUNT_ID`
+- `FRED_API_KEY`
+- `BLS_API_KEY`
+- `MIN_CONFIDENCE_SCORE`
+- `BLOCK_NEWS_MINUTES_BEFORE`
+- `BLOCK_NEWS_MINUTES_AFTER`
+
+Limites de responsabilidade:
+
+- falha de fonte critica vira `NAO_OPERAR`
+- conta real continua bloqueada no desktop
+- o sistema nao promete lucro nem remove decisao humana
 
 ## Proximos passos recomendados
 

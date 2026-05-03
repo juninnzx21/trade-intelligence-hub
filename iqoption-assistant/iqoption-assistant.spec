@@ -3,6 +3,7 @@
 from pathlib import Path
 
 project_dir = Path.cwd()
+project_root = project_dir.parent
 ui_assets = project_dir / "ui" / "assets"
 
 datas = []
@@ -14,11 +15,12 @@ hiddenimports = [
     "PySide6.QtGui",
     "PySide6.QtWidgets",
     "playwright.sync_api",
+    "market_intelligence",
 ]
 
 analysis = Analysis(
     ["ui/app.py"],
-    pathex=[str(project_dir)],
+    pathex=[str(project_dir), str(project_root)],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
@@ -54,4 +56,3 @@ coll = COLLECT(
     upx_exclude=[],
     name="iqoption-assistant",
 )
-

@@ -298,3 +298,50 @@ class SystemLog(Base):
     level: Mapped[str] = mapped_column(String(20))
     module: Mapped[str] = mapped_column(String(40))
     message: Mapped[str] = mapped_column(Text)
+
+
+class MarketDecision(Base):
+    __tablename__ = "market_decisions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    asset: Mapped[str] = mapped_column(String(20), index=True)
+    timeframe: Mapped[str] = mapped_column(String(10), index=True)
+    action: Mapped[str] = mapped_column(String(20), index=True)
+    confidence_score: Mapped[float] = mapped_column(Float)
+    technical_score: Mapped[float] = mapped_column(Float)
+    macro_score: Mapped[float] = mapped_column(Float)
+    risk_score: Mapped[float] = mapped_column(Float)
+    valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    reasons_json: Mapped[str] = mapped_column(Text, default="[]")
+    blocks_json: Mapped[str] = mapped_column(Text, default="[]")
+    regime: Mapped[str] = mapped_column(String(40), default="DESCONHECIDO")
+    data_sources_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class MarketFeature(Base):
+    __tablename__ = "market_features"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    asset: Mapped[str] = mapped_column(String(20), index=True)
+    timeframe: Mapped[str] = mapped_column(String(10), index=True)
+    volatility_score: Mapped[float] = mapped_column(Float)
+    technical_score: Mapped[float] = mapped_column(Float)
+    macro_score: Mapped[float] = mapped_column(Float)
+    risk_score: Mapped[float] = mapped_column(Float)
+    regime: Mapped[str] = mapped_column(String(40), default="DESCONHECIDO")
+    summary_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class MarketEvent(Base):
+    __tablename__ = "market_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    impact: Mapped[str] = mapped_column(String(20))
+    source: Mapped[str] = mapped_column(String(120))
+    region: Mapped[str] = mapped_column(String(20))
+    related_assets_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

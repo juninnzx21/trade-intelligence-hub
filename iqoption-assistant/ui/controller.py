@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta
 import logging
 from pathlib import Path
 import sys
@@ -14,6 +15,8 @@ from config import resolve_base_dir
 BASE_DIR = resolve_base_dir()
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
+if str(BASE_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR.parent))
 
 from audit_exporter import AuditExporter
 from auto_trader import AutoTrader, TraderSnapshot
@@ -25,6 +28,10 @@ from pin_guard import PinGuard
 from risk_guard import ArmSessionContext, can_arm_session
 from security import SecurityManager
 from signal_parser import TradeSignal, parse_signal_input
+from market_intelligence import MarketIntelligenceEngine, load_market_intelligence_config
+from market_intelligence.api_client import MarketIntelligenceApiClient
+from market_intelligence.models import DecisionResult
+from market_intelligence.storage import MarketIntelligenceStorage
 
 
 @dataclass
@@ -37,9 +44,15 @@ class PendingSignal:
     signal: TradeSignal
 
 
+def _format_signal_timeframe(value: str) -> str:
+    mapping = {"1M": "M1", "5M": "M5", "15M": "M15", "1H": "H1", "M1": "M1", "M5": "M5", "M15": "M15", "H1": "H1"}
+    return mapping.get(value.strip().upper(), "M1")
+
+
 class AutomationWorker(QObject):
     status_changed = Signal(dict)
     signals_changed = Signal(list)
+    analysis_changed = Signal(dict)
     toast = Signal(str, str)
     action_finished = Signal(str, bool)
 
@@ -54,6 +67,11 @@ class AutomationWorker(QObject):
         self.browser_controller: BrowserController | None = None
         self.browser_session: BrowserSession | None = None
         self.trader: AutoTrader | None = None
+        self.market_config = None
+        self.market_storage: MarketIntelligenceStorage | None = None
+        self.market_engine: MarketIntelligenceEngine | None = None
+        self.market_api_client: MarketIntelligenceApiClient | None = None
+        self.latest_analysis: DecisionResult | None = None
         self.pending_signals: list[PendingSignal] = []
         self._poll_timer: QTimer | None = None
         self._busy = False
@@ -69,6 +87,16 @@ class AutomationWorker(QObject):
         self.security.harden_local_storage()
         self.security.warn_if_unsealed(self.logger)
         self.pin_guard.ensure_pin_hash()
+        self.market_config = load_market_intelligence_config(BASE_DIR)
+        self.market_storage = MarketIntelligenceStorage(self.market_config.storage_dir)
+        if self.market_config.market_mode == "online" and self.market_config.market_api_url:
+            self.market_api_client = MarketIntelligenceApiClient(
+                self.market_config.market_api_url,
+                token=self.market_config.market_api_token,
+                timeout_seconds=self.market_config.request_timeout_seconds,
+            )
+        else:
+            self.market_engine = MarketIntelligenceEngine(self.market_config, self.market_storage)
         self.browser_controller = BrowserController(self.settings, self.logger)
         self.trader = AutoTrader(
             settings=self.settings,
@@ -86,6 +114,7 @@ class AutomationWorker(QObject):
         self._poll_timer.start(1000)
         self._emit_status()
         self._emit_signal_rows()
+        self._emit_analysis()
 
     @Slot()
     def open_iq_option(self) -> None:
@@ -248,6 +277,61 @@ class AutomationWorker(QObject):
         except Exception as exc:
             self._handle_failure("Exportar Auditoria", exc)
 
+    @Slot(str, str)
+    def analyze_market(self, asset: str, timeframe: str) -> None:
+        try:
+            if not asset.strip():
+                self.toast.emit("warning", "Informe um ativo para analisar.")
+                return
+            if self.market_config is None:
+                self.toast.emit("error", "Configuracao de inteligencia indisponivel.")
+                return
+            if self.market_config.market_mode == "online":
+                if self.market_api_client is None:
+                    raise RuntimeError("MARKET_MODE=online sem MARKET_API_URL configurado.")
+                decision = self.market_api_client.analyze(asset.strip(), timeframe)
+            else:
+                if self.market_engine is None:
+                    raise RuntimeError("Engine local de market intelligence nao inicializada.")
+                decision = self.market_engine.analyze_market(asset.strip(), timeframe)
+            self.latest_analysis = decision
+            self.toast.emit("success" if decision.action != "NAO_OPERAR" else "warning", f"Analise concluida: {decision.action}")
+            self._emit_analysis()
+            self._update_runtime_status(next_signal=f"{decision.asset} {decision.action} {decision.timeframe}", last_event=f"Analise atualizada: {decision.action}")
+        except Exception as exc:
+            self._handle_failure("Atualizar Analise", exc)
+
+    @Slot()
+    def send_analysis_to_signals(self) -> None:
+        try:
+            if self.latest_analysis is None:
+                self.toast.emit("warning", "Nenhuma analise disponivel para envio.")
+                return
+            if self.latest_analysis.action == "NAO_OPERAR":
+                self.toast.emit("warning", "A analise atual bloqueou a operacao. Nada sera enviado para sinais.")
+                return
+            entry_at = datetime.now().astimezone().replace(second=0, microsecond=0) + timedelta(minutes=1)
+            item = PendingSignal(
+                asset=self.latest_analysis.asset,
+                direction=self.latest_analysis.action,
+                entry_time=entry_at.strftime("%H:%M"),
+                expiration=_format_signal_timeframe(self.latest_analysis.timeframe),
+                status="PENDENTE",
+                signal=parse_signal_input(
+                    asset=self.latest_analysis.asset,
+                    direction=self.latest_analysis.action,
+                    entry_time_text=entry_at.strftime("%H:%M"),
+                    expiration=_format_signal_timeframe(self.latest_analysis.timeframe),
+                ),
+            )
+            self.pending_signals.append(item)
+            self.pending_signals.sort(key=lambda row: row.signal.entry_at)
+            self.toast.emit("info", f"Analise enviada para sinais: {item.asset} {item.direction}.")
+            self._emit_signal_rows()
+            self._update_runtime_status(next_signal=f"{item.asset} {item.direction} {item.entry_time} {item.expiration}", last_event="Analise convertida em sinal pendente.")
+        except Exception as exc:
+            self._handle_failure("Enviar para Sinais", exc)
+
     @Slot(str, str, str, str)
     def add_signal(self, asset: str, direction: str, entry_time: str, expiration: str) -> None:
         try:
@@ -328,6 +412,25 @@ class AutomationWorker(QObject):
         ]
         self.signals_changed.emit(payload)
 
+    def _emit_analysis(self) -> None:
+        mode = self.market_config.market_mode.upper() if self.market_config is not None else "LOCAL"
+        if self.latest_analysis is None:
+            self.analysis_changed.emit(
+                {
+                    "mode": mode,
+                    "action": "NAO_OPERAR",
+                    "confidence_score": 0,
+                    "valid_until": "-",
+                    "reasons": ["Nenhuma analise executada ainda."],
+                    "blocks": [],
+                    "data_sources": [],
+                }
+            )
+            return
+        payload = self.latest_analysis.to_dict()
+        payload["mode"] = mode
+        self.analysis_changed.emit(payload)
+
     def _handle_snapshot(self, snapshot: TraderSnapshot) -> None:
         self.status_changed.emit(asdict(snapshot))
 
@@ -374,6 +477,7 @@ class AutomationWorker(QObject):
                 "dry_run": self.settings.dry_run,
                 "allow_auto_click": self.settings.allow_auto_click,
                 "demo_only": self.settings.demo_only,
+                "market_mode": self.market_config.market_mode if self.market_config is not None else "local",
                 "encryption_ready": self.security.encryption_ready,
                 "audit_file": str(self.settings.encrypted_audit_file),
                 "stop_flag_exists": self.settings.stop_file.exists(),
@@ -396,6 +500,7 @@ class AutomationWorker(QObject):
 class UiController(QObject):
     status_changed = Signal(dict)
     signals_changed = Signal(list)
+    analysis_changed = Signal(dict)
     toast = Signal(str, str)
     action_finished = Signal(str, bool)
 
@@ -408,6 +513,8 @@ class UiController(QObject):
     request_write_integrity = Signal()
     request_export_audit = Signal()
     request_add_signal = Signal(str, str, str, str)
+    request_analyze_market = Signal(str, str)
+    request_send_analysis_to_signals = Signal()
     request_open_logs_folder = Signal()
     request_open_readme = Signal()
     request_shutdown = Signal()
@@ -428,12 +535,15 @@ class UiController(QObject):
         self.request_write_integrity.connect(self.worker.write_integrity)
         self.request_export_audit.connect(self.worker.export_audit)
         self.request_add_signal.connect(self.worker.add_signal)
+        self.request_analyze_market.connect(self.worker.analyze_market)
+        self.request_send_analysis_to_signals.connect(self.worker.send_analysis_to_signals)
         self.request_open_logs_folder.connect(self.worker.open_logs_folder)
         self.request_open_readme.connect(self.worker.open_readme)
         self.request_shutdown.connect(self.worker.shutdown)
 
         self.worker.status_changed.connect(self.status_changed)
         self.worker.signals_changed.connect(self.signals_changed)
+        self.worker.analysis_changed.connect(self.analysis_changed)
         self.worker.toast.connect(self.toast)
         self.worker.action_finished.connect(self.action_finished)
 

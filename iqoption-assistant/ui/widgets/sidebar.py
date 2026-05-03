@@ -27,6 +27,7 @@ class Sidebar(QFrame):
         for key, label in (
             ("dashboard", "Dashboard"),
             ("signals", "Sinais"),
+            ("intelligence", "Inteligencia"),
             ("security", "Seguranca"),
             ("logs", "Logs"),
             ("settings", "Configuracoes"),
@@ -46,4 +47,3 @@ class Sidebar(QFrame):
             button.style().unpolish(button)
             button.style().polish(button)
         self._on_change(section)
-

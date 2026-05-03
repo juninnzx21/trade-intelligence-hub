@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from ui.controller import UiController
 from ui.widgets.control_panel import ControlPanel
+from ui.widgets.intelligence_panel import IntelligencePanel
 from ui.widgets.log_viewer import LogViewer
 from ui.widgets.metric_card import MetricCard
 from ui.widgets.safety_panel import SafetyPanel
@@ -73,17 +74,20 @@ class MainWindow(QMainWindow):
 
         self.controller.status_changed.connect(self._apply_status)
         self.controller.signals_changed.connect(self.signal_panel.update_signals)
+        self.controller.analysis_changed.connect(self.intelligence_panel.update_analysis)
         self.controller.toast.connect(self._show_toast)
 
     def _build_pages(self) -> None:
         self.dashboard_page = self._build_dashboard_page()
         self.signals_page = self._build_signals_page()
+        self.intelligence_page = self._build_intelligence_page()
         self.security_page = self._build_security_page()
         self.logs_page = self._build_logs_page()
         self.settings_page = self._build_settings_page()
 
         self.stack.addWidget(self.dashboard_page)
         self.stack.addWidget(self.signals_page)
+        self.stack.addWidget(self.intelligence_page)
         self.stack.addWidget(self.security_page)
         self.stack.addWidget(self.logs_page)
         self.stack.addWidget(self.settings_page)
@@ -143,6 +147,17 @@ class MainWindow(QMainWindow):
             on_add_signal=lambda asset, direction, entry, expiration: self.controller.request_add_signal.emit(asset, direction, entry, expiration)
         )
         layout.addWidget(self.signal_panel)
+        return page
+
+    def _build_intelligence_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(18)
+        self.intelligence_panel = IntelligencePanel(
+            on_analyze=lambda asset, timeframe: self.controller.request_analyze_market.emit(asset, timeframe),
+            on_send_signal=lambda: self.controller.request_send_analysis_to_signals.emit(),
+        )
+        layout.addWidget(self.intelligence_panel)
         return page
 
     def _build_security_page(self) -> QWidget:
@@ -226,9 +241,10 @@ class MainWindow(QMainWindow):
         index_map = {
             "dashboard": 0,
             "signals": 1,
-            "security": 2,
-            "logs": 3,
-            "settings": 4,
+            "intelligence": 2,
+            "security": 3,
+            "logs": 4,
+            "settings": 5,
         }
         self.stack.setCurrentIndex(index_map[section])
 
@@ -315,6 +331,7 @@ class MainWindow(QMainWindow):
             ("DRY_RUN", str(payload.get("dry_run"))),
             ("ALLOW_AUTO_CLICK", str(payload.get("allow_auto_click"))),
             ("DEMO_ONLY", str(payload.get("demo_only"))),
+            ("MARKET_MODE", str(payload.get("market_mode"))),
             ("Audit file", str(payload.get("audit_file", "-"))),
         ]
         self.settings_table.setRowCount(len(rows))

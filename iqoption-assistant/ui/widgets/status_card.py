@@ -8,9 +8,9 @@ def badge_object_name(value: str) -> str:
     normalized = value.strip().upper()
     if normalized in {"OK", "DEMO", "DEMO_ARMADO", "VALIDADO"}:
         return "BadgeOk"
-    if normalized in {"DRY_RUN", "ALERTA", "ATENCAO"}:
+    if normalized in {"DRY_RUN", "ALERTA", "ATENCAO", "DESCONHECIDO"}:
         return "BadgeWarn"
-    if normalized in {"PARADO", "FALHA", "BLOQUEADO", "DESCONHECIDO"}:
+    if normalized in {"PARADO", "FALHA", "BLOQUEADO", "REAL"}:
         return "BadgeDanger"
     return "BadgeInfo"
 
@@ -51,4 +51,3 @@ class StatusCard(QFrame):
         self.badge.setObjectName(badge_object_name(value))
         self.style().unpolish(self.badge)
         self.style().polish(self.badge)
-
