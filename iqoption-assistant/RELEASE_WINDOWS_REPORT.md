@@ -30,7 +30,7 @@ Objetivo desta revisao:
 | `STOP` cria `STOP_TRADING.flag` | OK | validado chamando `AutoTrader.request_stop()` |
 | Logs acessiveis | OK | `dist/iqoption-assistant/storage/logs/trading-assistant.log` criado |
 | Exportacao de auditoria | OK | `python main.py --export-audit` retornou sucesso |
-| Integridade depois do build | OK | manifesto presente em `dist/iqoption-assistant/storage/integrity_manifest.json` e validado no source |
+| Integridade depois do build | OK | manifesto presente em `dist/iqoption-assistant/storage/integrity_manifest.json` no perfil `dist` |
 | `README.md` do pacote `dist` | OK | `dist/iqoption-assistant/README.md` presente |
 | `.env` externo editavel | OK | `dist/iqoption-assistant/.env` presente |
 | `storage/` externo acessivel | OK | `dist/iqoption-assistant/storage/` presente |
@@ -172,7 +172,7 @@ Presentes no pacote:
 
 - manifesto regravado com `python main.py --write-integrity`
 - checagem passou com `python main.py --check-integrity`
-- manifesto copiado para `dist/iqoption-assistant/storage/integrity_manifest.json`
+- manifesto gerado no proprio perfil `dist` em `dist/iqoption-assistant/storage/integrity_manifest.json`
 - checagem de existencia:
 
 ```powershell
@@ -203,4 +203,4 @@ Essas ressalvas nao removem protecoes nem abrem caminho para conta real; apenas 
    - `storage/logs/trading-assistant.log`
    - `storage/logs/audit.exported.log`
 5. Se o layout da IQ Option mudar, revisar seletores em `browser_controller.py`.
-6. Se for necessario validar integridade no pacote final, a proxima melhoria correta e adicionar um comando de manutencao no `.exe` ou um utilitario companion para release.
+6. Se precisar regenerar manifesto no pacote final sem rebuild completo, usar `IQASSISTANT_BASE_DIR` apontando para `dist/iqoption-assistant` antes de rodar `main.py --write-integrity`.

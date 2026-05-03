@@ -172,6 +172,8 @@ O build do Windows ja gera o manifesto automaticamente em:
 dist\iqoption-assistant\storage\integrity_manifest.json
 ```
 
+Esse manifesto agora nasce no perfil correto do pacote Windows (`dist`), nao mais no perfil do codigo-fonte.
+
 Rodar o executavel:
 
 ```powershell
@@ -195,12 +197,9 @@ Fallback manual para regenerar manifesto:
 
 ```powershell
 cd "C:\Users\junin\OneDrive\Documentos\New project\iqoption-assistant"
+$env:IQASSISTANT_BASE_DIR="C:\Users\junin\OneDrive\Documentos\New project\iqoption-assistant\dist\iqoption-assistant"
 .\.venv\Scripts\python.exe main.py --write-integrity
-
-Copy-Item `
-  ".\storage\integrity_manifest.json" `
-  ".\dist\iqoption-assistant\storage\integrity_manifest.json" `
-  -Force
+Remove-Item Env:IQASSISTANT_BASE_DIR
 ```
 
 No app, se precisar, voce ainda pode usar:

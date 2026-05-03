@@ -56,6 +56,13 @@ if (-not (Test-Path $sourceIntegrityManifest)) {
 }
 Copy-Item $sourceIntegrityManifest $distIntegrityManifest -Force
 
+$env:IQASSISTANT_BASE_DIR = $appRoot
+& $pythonCmd main.py --write-integrity
+Remove-Item Env:IQASSISTANT_BASE_DIR -ErrorAction SilentlyContinue
+if (-not (Test-Path $distIntegrityManifest)) {
+    throw "Manifesto de integridade nao foi gerado no pacote dist em $distIntegrityManifest"
+}
+
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $exePath
