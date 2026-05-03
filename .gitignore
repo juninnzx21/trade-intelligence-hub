@@ -19,3 +19,7 @@ redis-data/
 *.log
 *.err
 backend/app/**/__pycache__/
+iqoption-assistant/storage/*.json
+iqoption-assistant/storage/*.hash
+iqoption-assistant/storage/logs/audit.secure.log
+iqoption-assistant/storage/logs/audit.exported.log

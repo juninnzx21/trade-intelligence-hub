@@ -24,6 +24,15 @@ class ExecutionContext:
     browser_alive: bool
 
 
+@dataclass(frozen=True)
+class ArmSessionContext:
+    pin_validated: bool
+    pin_blocked: bool
+    integrity_ok: bool
+    stop_flag_exists: bool
+    account_is_demo: bool
+
+
 def signal_in_execution_window(signal: TradeSignal, now: datetime | None = None, tolerance_seconds: int = 5) -> GuardDecision:
     current = now.astimezone(BRAZIL_TZ) if now else datetime.now(BRAZIL_TZ)
     delta = (current - signal.entry_at).total_seconds()
@@ -66,6 +75,26 @@ def ensure_real_account_protection(account_is_demo: bool, demo_only: bool) -> Gu
     if demo_only and not account_is_demo:
         return GuardDecision(False, "Protecao ativa: conta real ou nao identificada.")
     return GuardDecision(True, "Conta compativel com modo observador.")
+
+
+def can_arm_session(settings: Settings, context: ArmSessionContext) -> GuardDecision:
+    if context.pin_blocked:
+        return GuardDecision(False, "START bloqueado: PIN bloqueado nesta sessao.")
+    if not context.pin_validated:
+        return GuardDecision(False, "START bloqueado: PIN nao validado.")
+    if not context.integrity_ok:
+        return GuardDecision(False, "START bloqueado: integridade local falhou.")
+    if context.stop_flag_exists:
+        return GuardDecision(False, "START bloqueado: STOP flag ativa.")
+    if settings.dry_run:
+        return GuardDecision(False, "START bloqueado: DRY_RUN=true.")
+    if not settings.allow_auto_click:
+        return GuardDecision(False, "START bloqueado: ALLOW_AUTO_CLICK=false.")
+    if not settings.demo_only:
+        return GuardDecision(False, "START bloqueado: DEMO_ONLY=false.")
+    if not context.account_is_demo:
+        return GuardDecision(False, "START bloqueado: conta nao confirmada como DEMO.")
+    return GuardDecision(True, "Sessao pronta para DEMO_ARMADO.")
 
 
 def pre_click_guard(settings: Settings, signal: TradeSignal, context: ExecutionContext, now: datetime | None = None) -> GuardDecision:

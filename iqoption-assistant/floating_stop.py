@@ -6,6 +6,7 @@ import logging
 from queue import Empty, Queue
 import threading
 import tkinter as tk
+from tkinter import simpledialog
 
 from pynput import keyboard
 
@@ -16,10 +17,12 @@ class PanelState:
     current_asset: str
     next_signal: str
     trades_executed: int
+    integrity_status: str
+    pin_status: str
 
 
 class FloatingStopPanel:
-    def __init__(self, on_start: Callable[[str], None], on_stop: Callable[[str], None], logger: logging.Logger) -> None:
+    def __init__(self, on_start: Callable[[str, str | None], None], on_stop: Callable[[str], None], logger: logging.Logger) -> None:
         self.on_start = on_start
         self.on_stop = on_stop
         self.logger = logger
@@ -30,6 +33,8 @@ class FloatingStopPanel:
         self._asset_var: tk.StringVar | None = None
         self._signal_var: tk.StringVar | None = None
         self._trades_var: tk.StringVar | None = None
+        self._integrity_var: tk.StringVar | None = None
+        self._pin_var: tk.StringVar | None = None
         self._hotkey_listener: keyboard.GlobalHotKeys | None = None
 
     def start(self) -> None:
@@ -58,7 +63,10 @@ class FloatingStopPanel:
 
     def _trigger_start(self, reason: str) -> None:
         self.logger.info("Start acionado: %s", reason)
-        self.on_start(reason)
+        pin: str | None = None
+        if self._root is not None:
+            pin = simpledialog.askstring("Validar PIN", "Digite o PIN local para armar a sessao:", parent=self._root, show="*")
+        self.on_start(reason, pin)
 
     def _start_hotkey(self) -> None:
         self._hotkey_listener = keyboard.GlobalHotKeys({
@@ -72,7 +80,7 @@ class FloatingStopPanel:
         root.title("IQ Assistant Control")
         root.attributes("-topmost", True)
         root.resizable(False, False)
-        root.geometry("360x235+30+30")
+        root.geometry("390x300+30+30")
         root.configure(bg="#111827")
 
         self._root = root
@@ -80,6 +88,8 @@ class FloatingStopPanel:
         self._asset_var = tk.StringVar(value="Ativo atual: -")
         self._signal_var = tk.StringVar(value="Proximo sinal: -")
         self._trades_var = tk.StringVar(value="Operacoes na sessao: 0")
+        self._integrity_var = tk.StringVar(value="Integridade: NAO GERADA")
+        self._pin_var = tk.StringVar(value="PIN: NAO VALIDADO")
 
         frame = tk.Frame(root, bg="#111827", padx=14, pady=14)
         frame.pack(fill="both", expand=True)
@@ -88,7 +98,9 @@ class FloatingStopPanel:
         tk.Label(frame, textvariable=self._status_var, fg="#93c5fd", bg="#111827", font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(10, 0))
         tk.Label(frame, textvariable=self._asset_var, fg="#d1d5db", bg="#111827", font=("Segoe UI", 10)).pack(anchor="w", pady=(8, 0))
         tk.Label(frame, textvariable=self._signal_var, fg="#d1d5db", bg="#111827", font=("Segoe UI", 10), wraplength=300, justify="left").pack(anchor="w", pady=(6, 12))
-        tk.Label(frame, textvariable=self._trades_var, fg="#d1d5db", bg="#111827", font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 12))
+        tk.Label(frame, textvariable=self._trades_var, fg="#d1d5db", bg="#111827", font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 6))
+        tk.Label(frame, textvariable=self._integrity_var, fg="#d1d5db", bg="#111827", font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 6))
+        tk.Label(frame, textvariable=self._pin_var, fg="#d1d5db", bg="#111827", font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 12))
         button_row = tk.Frame(frame, bg="#111827")
         button_row.pack(fill="x")
         tk.Button(
@@ -140,6 +152,10 @@ class FloatingStopPanel:
                         self._signal_var.set(f"Proximo sinal: {payload.next_signal or '-'}")
                     if self._trades_var:
                         self._trades_var.set(f"Operacoes na sessao: {payload.trades_executed}")
+                    if self._integrity_var:
+                        self._integrity_var.set(f"Integridade: {payload.integrity_status}")
+                    if self._pin_var:
+                        self._pin_var.set(f"PIN: {payload.pin_status}")
                 if action == "message" and isinstance(payload, str) and self._signal_var:
                     self._signal_var.set(payload)
         except Empty:

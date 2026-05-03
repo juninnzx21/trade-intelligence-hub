@@ -7,12 +7,14 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import Settings
-from risk_guard import ExecutionContext, can_auto_click, ensure_real_account_protection, is_demo_account, pre_click_guard
+from risk_guard import ArmSessionContext, ExecutionContext, can_arm_session, can_auto_click, ensure_real_account_protection, is_demo_account, pre_click_guard
 from signal_parser import BRAZIL_TZ, build_signal
 
 
 def make_settings(**overrides: object) -> Settings:
+    root = Path(".")
     base = dict(
+        root_dir=root,
         dry_run=True,
         demo_only=True,
         allow_auto_click=False,
@@ -26,9 +28,16 @@ def make_settings(**overrides: object) -> Settings:
         login_wait_timeout_seconds=600,
         alert_before_seconds=10,
         log_level="INFO",
+        enable_local_encryption=True,
+        assistant_pin="12345690",
+        assistant_master_key="super-secret-local-key",
         logs_dir=Path("storage/logs"),
         storage_dir=Path("storage"),
         stop_file=Path("storage/STOP_TRADING.flag"),
+        encrypted_audit_file=Path("storage/logs/audit.secure.log"),
+        integrity_manifest=Path("storage/integrity_manifest.json"),
+        pin_hash_file=Path("storage/pin.hash"),
+        pin_max_attempts=3,
     )
     base.update(overrides)
     return Settings(**base)
@@ -92,3 +101,28 @@ def test_auto_click_guard_requires_demo_only_true() -> None:
     )
     assert not decision.allowed
     assert "DEMO_ONLY=false" in decision.reason
+
+
+def test_arm_session_requires_valid_pin_and_integrity() -> None:
+    context = ArmSessionContext(
+        pin_validated=False,
+        pin_blocked=False,
+        integrity_ok=True,
+        stop_flag_exists=False,
+        account_is_demo=True,
+    )
+    decision = can_arm_session(make_settings(dry_run=False, allow_auto_click=True), context)
+    assert not decision.allowed
+    assert "PIN nao validado" in decision.reason
+
+
+def test_arm_session_allows_demo_when_guards_pass() -> None:
+    context = ArmSessionContext(
+        pin_validated=True,
+        pin_blocked=False,
+        integrity_ok=True,
+        stop_flag_exists=False,
+        account_is_demo=True,
+    )
+    decision = can_arm_session(make_settings(dry_run=False, allow_auto_click=True), context)
+    assert decision.allowed
