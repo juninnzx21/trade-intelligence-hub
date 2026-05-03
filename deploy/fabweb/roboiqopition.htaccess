@@ -1,4 +1,19 @@
+<IfModule mod_headers.c>
+Header always set Access-Control-Allow-Origin "*" "expr=%{REQUEST_URI} =~ m#^/api/#"
+Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS" "expr=%{REQUEST_URI} =~ m#^/api/#"
+Header always set Access-Control-Allow-Headers "Content-Type, Authorization" "expr=%{REQUEST_URI} =~ m#^/api/#"
+</IfModule>
+
+<IfModule mod_authz_core.c>
+<Files "api.php">
+Require all granted
+</Files>
+</IfModule>
+
+<IfModule mod_rewrite.c>
 RewriteEngine On
+RewriteCond %{REQUEST_METHOD} =OPTIONS
+RewriteRule ^api/v1/.*$ api.php [L,QSA]
 
 RewriteRule ^api/v1/.*$ api.php [L,QSA]
 
@@ -7,3 +22,4 @@ RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^ - [L]
 
 RewriteRule ^ index.html [L]
+</IfModule>

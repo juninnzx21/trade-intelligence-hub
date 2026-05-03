@@ -3,6 +3,209 @@ declare(strict_types=1);
 
 date_default_timezone_set('America/Sao_Paulo');
 
+load_api_env(__DIR__ . '/.env.api');
+apply_cors_headers();
+
+$requestMethod = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+$payload = dashboard_payload();
+
+if ($requestMethod === 'OPTIONS') {
+    log_api_access($path, 200);
+    http_response_code(200);
+    exit;
+}
+
+$apiPublic = read_bool_env('API_PUBLIC', true);
+$apiToken = trim(read_env_value('API_TOKEN', ''));
+
+if (str_starts_with($path, '/api/')) {
+    if ($apiPublic === false) {
+        respond_error(403, 'forbidden', 'blocked_by_security_layer', $path);
+    }
+
+    if ($apiToken !== '' && !is_authorized_request($apiToken)) {
+        respond_error(403, 'forbidden', 'blocked_by_security_layer', $path);
+    }
+}
+
+if ($path === '/api/v1/health/detailed') {
+    respond_json([
+        'status' => 'ok',
+        'database' => 'fabweb-fallback',
+        'redis_channel' => 'disabled',
+        'signals' => count($payload['signals']),
+        'live_board_cached' => count($payload['live_board']),
+        'api_public' => $apiPublic,
+        'api_token_required' => $apiToken !== '',
+    ], 200, $path);
+}
+
+if ($path === '/api/v1/dashboard' || $path === '/api/v1/reports/export') {
+    respond_json($payload, 200, $path);
+}
+
+if ($path === '/api/v1/market/live-board' || $path === '/api/v1/market/live-board/refresh') {
+    respond_json($payload['live_board'], 200, $path);
+}
+
+if ($path === '/api/v1/market/status') {
+    respond_json(market_status_payload($payload), 200, $path);
+}
+
+if ($path === '/api/v1/market/latest') {
+    $asset = trim((string) ($_GET['asset'] ?? ''));
+    if ($asset === '') {
+        respond_error(400, 'bad_request', 'asset is required', $path);
+    }
+    respond_json(build_decision_response($payload, $asset, (string) ($_GET['timeframe'] ?? '')), 200, $path);
+}
+
+if ($path === '/api/v1/market/analyze') {
+    $raw = file_get_contents('php://input') ?: '{}';
+    $body = json_decode($raw, true);
+    if (!is_array($body)) {
+        $body = [];
+    }
+    $asset = trim((string) ($body['asset'] ?? ''));
+    $timeframe = trim((string) ($body['timeframe'] ?? 'M1'));
+    if ($asset === '') {
+        respond_error(400, 'bad_request', 'asset is required', $path);
+    }
+    respond_json(build_decision_response($payload, $asset, $timeframe), 200, $path);
+}
+
+if ($path === '/api/v1/reports/export.csv') {
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="trade-intelligence-hub-fallback.csv"');
+    http_response_code(200);
+    log_api_access($path, 200);
+    echo "timestamp,symbol,market,timeframe,decision,score,risk_level\n";
+    foreach ($payload['signals'] as $signal) {
+        echo implode(',', [
+            $signal['timestamp'],
+            $signal['symbol'],
+            $signal['market'],
+            $signal['timeframe'],
+            $signal['decision'],
+            (string) $signal['score'],
+            $signal['risk_level'],
+        ]) . "\n";
+    }
+    exit;
+}
+
+respond_error(404, 'not_found', 'resource_not_found', $path);
+
+function load_api_env(string $envPath): void
+{
+    if (!is_file($envPath) || !is_readable($envPath)) {
+        return;
+    }
+
+    $lines = file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+    foreach ($lines as $line) {
+        $trimmed = trim($line);
+        if ($trimmed === '' || str_starts_with($trimmed, '#') || !str_contains($trimmed, '=')) {
+            continue;
+        }
+        [$key, $value] = explode('=', $trimmed, 2);
+        $key = trim($key);
+        $value = trim($value);
+        $value = trim($value, "\"'");
+        if ($key !== '' && getenv($key) === false) {
+            putenv($key . '=' . $value);
+            $_ENV[$key] = $value;
+        }
+    }
+}
+
+function read_env_value(string $key, string $default = ''): string
+{
+    $value = getenv($key);
+    if ($value === false || $value === null) {
+        return $default;
+    }
+    return trim((string) $value);
+}
+
+function read_bool_env(string $key, bool $default): bool
+{
+    $value = strtolower(read_env_value($key, $default ? 'true' : 'false'));
+    return in_array($value, ['1', 'true', 'yes', 'on'], true);
+}
+
+function apply_cors_headers(): void
+{
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type, Authorization');
+    header('Vary: Origin');
+}
+
+function respond_json(array $payload, int $statusCode, string $path): void
+{
+    header('Content-Type: application/json; charset=UTF-8');
+    http_response_code($statusCode);
+    log_api_access($path, $statusCode);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function respond_error(int $statusCode, string $error, string $reason, string $path): void
+{
+    header('Content-Type: application/json; charset=UTF-8');
+    http_response_code($statusCode);
+    log_api_access($path, $statusCode);
+    echo json_encode([
+        'error' => $error,
+        'reason' => $reason,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+function is_authorized_request(string $expectedToken): bool
+{
+    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+    if (!is_string($header) || $header === '') {
+        return false;
+    }
+
+    if (!preg_match('/^Bearer\s+(.+)$/i', trim($header), $matches)) {
+        return false;
+    }
+
+    return hash_equals($expectedToken, trim($matches[1]));
+}
+
+function log_api_access(string $path, int $statusCode): void
+{
+    $logDir = __DIR__ . '/storage/logs';
+    if (!is_dir($logDir)) {
+        @mkdir($logDir, 0775, true);
+    }
+
+    $line = json_encode([
+        'timestamp' => (new DateTimeImmutable('now', new DateTimeZone('America/Sao_Paulo')))->format(DATE_ATOM),
+        'ip' => (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown'),
+        'method' => strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET')),
+        'endpoint' => $path,
+        'status' => $statusCode,
+        'user_agent' => mask_user_agent((string) ($_SERVER['HTTP_USER_AGENT'] ?? '')),
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+    @file_put_contents($logDir . '/api_access.log', $line . PHP_EOL, FILE_APPEND);
+}
+
+function mask_user_agent(string $userAgent): string
+{
+    $trimmed = trim($userAgent);
+    if ($trimmed === '') {
+        return 'empty';
+    }
+    return substr($trimmed, 0, 160);
+}
+
 function iso_offset(int $minutes): string
 {
     $dt = new DateTimeImmutable('now', new DateTimeZone('America/Sao_Paulo'));
@@ -312,90 +515,3 @@ function build_decision_response(array $payload, string $asset, string $timefram
         'mode' => 'fallback',
     ];
 }
-
-$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
-$payload = dashboard_payload();
-
-if ($path === '/api/v1/health/detailed') {
-    header('Content-Type: application/json; charset=UTF-8');
-    echo json_encode([
-        'status' => 'ok',
-        'database' => 'fabweb-fallback',
-        'redis_channel' => 'disabled',
-        'signals' => count($payload['signals']),
-        'live_board_cached' => count($payload['live_board']),
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
-}
-
-if ($path === '/api/v1/dashboard' || $path === '/api/v1/reports/export') {
-    header('Content-Type: application/json; charset=UTF-8');
-    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
-}
-
-if ($path === '/api/v1/market/live-board' || $path === '/api/v1/market/live-board/refresh') {
-    header('Content-Type: application/json; charset=UTF-8');
-    echo json_encode($payload['live_board'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
-}
-
-if ($path === '/api/v1/market/status') {
-    header('Content-Type: application/json; charset=UTF-8');
-    echo json_encode(market_status_payload($payload), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
-}
-
-if ($path === '/api/v1/market/latest') {
-    $asset = trim((string) ($_GET['asset'] ?? ''));
-    if ($asset === '') {
-        http_response_code(400);
-        header('Content-Type: application/json; charset=UTF-8');
-        echo json_encode(['detail' => 'asset is required'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        exit;
-    }
-    header('Content-Type: application/json; charset=UTF-8');
-    echo json_encode(build_decision_response($payload, $asset, (string) ($_GET['timeframe'] ?? '')), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
-}
-
-if ($path === '/api/v1/market/analyze') {
-    $raw = file_get_contents('php://input') ?: '{}';
-    $body = json_decode($raw, true);
-    if (!is_array($body)) {
-        $body = [];
-    }
-    $asset = trim((string) ($body['asset'] ?? ''));
-    $timeframe = trim((string) ($body['timeframe'] ?? 'M1'));
-    if ($asset === '') {
-        http_response_code(400);
-        header('Content-Type: application/json; charset=UTF-8');
-        echo json_encode(['detail' => 'asset is required'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        exit;
-    }
-    header('Content-Type: application/json; charset=UTF-8');
-    echo json_encode(build_decision_response($payload, $asset, $timeframe), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    exit;
-}
-
-if ($path === '/api/v1/reports/export.csv') {
-    header('Content-Type: text/csv; charset=UTF-8');
-    header('Content-Disposition: attachment; filename="trade-intelligence-hub-fallback.csv"');
-    echo "timestamp,symbol,market,timeframe,decision,score,risk_level\n";
-    foreach ($payload['signals'] as $signal) {
-        echo implode(',', [
-            $signal['timestamp'],
-            $signal['symbol'],
-            $signal['market'],
-            $signal['timeframe'],
-            $signal['decision'],
-            (string) $signal['score'],
-            $signal['risk_level'],
-        ]) . "\n";
-    }
-    exit;
-}
-
-http_response_code(404);
-header('Content-Type: application/json; charset=UTF-8');
-echo json_encode(['detail' => 'Not found'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

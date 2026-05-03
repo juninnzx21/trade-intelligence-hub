@@ -126,6 +126,45 @@ Credenciais estruturais:
 - `GET /api/v1/market/status`
 - `GET /api/v1/market/latest?asset=EUR/USD`
 
+## API publica
+
+O fallback online da Fabweb expõe uma API publica controlada para leitura do estado do motor e das decisoes de mercado:
+
+- `GET /api/v1/health/detailed`
+- `GET /api/v1/market/status`
+- `GET /api/v1/market/latest?asset=EUR/USD&timeframe=15m`
+- `POST /api/v1/market/analyze`
+
+Exemplos:
+
+```powershell
+curl https://roboiqopition.juninnzxtec.com.br/api/v1/health/detailed
+curl "https://roboiqopition.juninnzxtec.com.br/api/v1/market/latest?asset=EUR/USD&timeframe=15m"
+Invoke-RestMethod -Uri "https://roboiqopition.juninnzxtec.com.br/api/v1/market/analyze" -Method Post -ContentType "application/json" -Body '{"asset":"EUR/USD","timeframe":"M1"}'
+```
+
+Configuracao opcional de token no fallback da Fabweb:
+
+- `API_PUBLIC=true`
+- `API_TOKEN=`
+
+Se `API_TOKEN` estiver vazio, o acesso publico fica liberado.
+Se `API_TOKEN` estiver definido, envie:
+
+```text
+Authorization: Bearer SEU_TOKEN
+```
+
+Arquivos do fallback online:
+
+- `deploy/fabweb/roboiqopition.api.php`
+- `deploy/fabweb/roboiqopition.htaccess`
+- `scripts/test_api.ps1`
+
+Logs de acesso no host:
+
+- `storage/logs/api_access.log`
+
 ## Market Intelligence Compartilhado
 
 O repositorio agora inclui um modulo `market_intelligence/` reutilizado por:
